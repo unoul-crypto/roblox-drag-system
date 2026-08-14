@@ -65,16 +65,23 @@ end
 
 local function findTaggedTarget(hit: Instance?): DragTarget?
 	local current = hit
+	local taggedPart: BasePart? = nil
 
 	while current and current ~= workspace do
 		if CollectionService:HasTag(current, config.TAG_NAME) and isSupportedTarget(current) then
-			return current :: DragTarget
+			if current:IsA("Model") then
+				return current
+			end
+
+			if current:IsA("BasePart") and not taggedPart then
+				taggedPart = current
+			end
 		end
 
 		current = current.Parent
 	end
 
-	return nil
+	return taggedPart
 end
 
 local function getMouseRay(): Ray?
@@ -241,10 +248,8 @@ local function startDrag()
 		return
 	end
 
-	local pivot = target:GetPivot()
-	local boxCFrame, boxSize = dragCollision.getBoundingBox(target)
 	local grabDistance = (result.Position - camera.CFrame.Position).Magnitude
-	local requestSucceeded, accepted = pcall(function()
+	local requestSucceeded, accepted, acceptedTarget = pcall(function()
 		return beginDragRemote:InvokeServer(target, result.Position)
 	end)
 	if not requestSucceeded then
@@ -254,11 +259,16 @@ local function startDrag()
 	if accepted ~= true or not target:IsDescendantOf(workspace) then
 		return
 	end
+	if typeof(acceptedTarget) == "Instance" and isSupportedTarget(acceptedTarget) then
+		target = acceptedTarget :: DragTarget
+	end
 	if not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
 		endDragRemote:FireServer(target)
 		return
 	end
 
+	local pivot = target:GetPivot()
+	local boxCFrame, boxSize = dragCollision.getBoundingBox(target)
 	local marker = createGrabMarker()
 	marker.Position = result.Position
 	dragState = {

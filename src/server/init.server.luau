@@ -7,6 +7,18 @@ local dragCollision = require(ReplicatedStorage.Shared.DragCollision)
 
 type DragTarget = BasePart | Model
 
+type PartState = {
+	part: BasePart,
+	anchored: boolean,
+}
+
+type ModelRig = {
+	model: Model,
+	container: Folder,
+	partStates: {PartState},
+	originalPrimaryPart: BasePart?,
+}
+
 type DragSession = {
 	target: DragTarget,
 	localGrabPoint: Vector3,
@@ -16,6 +28,7 @@ type DragSession = {
 	boxOffset: CFrame,
 	boxSize: Vector3,
 	lastPivot: CFrame,
+	modelRig: ModelRig?,
 }
 
 local remotes = Instance.new("Folder")
@@ -99,6 +112,25 @@ local function isValidTarget(target: any): boolean
 	return target:IsA("Model") and target:FindFirstChildWhichIsA("BasePart", true) ~= nil
 end
 
+local function getPreferredTarget(target: DragTarget): DragTarget
+	if target:IsA("Model") then
+		return target
+	end
+
+	local current = target.Parent
+	while current and current ~= workspace do
+		if current:IsA("Model")
+			and CollectionService:HasTag(current, config.TAG_NAME)
+			and current:FindFirstChildWhichIsA("BasePart", true)
+		then
+			return current
+		end
+		current = current.Parent
+	end
+
+	return target
+end
+
 local function isPointInsideTarget(target: DragTarget, worldPoint: Vector3): boolean
 	local boxCFrame: CFrame
 	local boxSize: Vector3
@@ -151,6 +183,105 @@ local function stopTargetMotion(target: DragTarget)
 	end
 end
 
+local function getModelParts(model: Model): {BasePart}
+	local parts = {}
+	for _, descendant in model:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			table.insert(parts, descendant)
+		end
+	end
+	return parts
+end
+
+local function findRigRoot(model: Model, parts: {BasePart}, hitPosition: Vector3): BasePart
+	if model.PrimaryPart and model.PrimaryPart:IsDescendantOf(model) then
+		return model.PrimaryPart
+	end
+
+	local closestPart = parts[1]
+	local closestDistance = math.huge
+	for _, part in parts do
+		local localPoint = part.CFrame:PointToObjectSpace(hitPosition)
+		local halfSize = part.Size * 0.5 + Vector3.one * 0.05
+		if math.abs(localPoint.X) <= halfSize.X
+			and math.abs(localPoint.Y) <= halfSize.Y
+			and math.abs(localPoint.Z) <= halfSize.Z
+		then
+			return part
+		end
+
+		local distance = (part.Position - hitPosition).Magnitude
+		if distance < closestDistance then
+			closestPart = part
+			closestDistance = distance
+		end
+	end
+
+	return closestPart
+end
+
+
+local function createModelRig(model: Model, hitPosition: Vector3): ModelRig
+	local parts = getModelParts(model)
+	local root = findRigRoot(model, parts, hitPosition)
+	local partStates = {}
+	local originalPrimaryPart = model.PrimaryPart
+
+	-- A Model is only a container; its parts can otherwise fall independently.
+	-- Temporarily make it one unanchored assembly while it is being dragged.
+	for _, part in parts do
+		table.insert(partStates, {
+			part = part,
+			anchored = part.Anchored,
+		})
+		part.Anchored = false
+	end
+
+	local container = Instance.new("Folder")
+	container.Name = "DragSystemTemporaryRig"
+	container.Parent = model
+
+	for _, part in parts do
+		if part ~= root then
+			local weld = Instance.new("WeldConstraint")
+			weld.Name = "DragSystemWeld"
+			weld.Part0 = root
+			weld.Part1 = part
+			weld.Parent = container
+		end
+	end
+	model.PrimaryPart = root
+
+	return {
+		model = model,
+		container = container,
+		partStates = partStates,
+		originalPrimaryPart = originalPrimaryPart,
+	}
+end
+
+local function destroyModelRig(rig: ModelRig?)
+	if not rig then
+		return
+	end
+
+	if rig.container.Parent then
+		rig.container:Destroy()
+	end
+	pcall(function()
+		if rig.originalPrimaryPart and rig.originalPrimaryPart:IsDescendantOf(rig.model) then
+			rig.model.PrimaryPart = rig.originalPrimaryPart
+		else
+			rig.model.PrimaryPart = nil
+		end
+	end)
+	for _, state in rig.partStates do
+		if state.part.Parent then
+			state.part.Anchored = state.anchored
+		end
+	end
+end
+
 local function endSession(player: Player)
 	local session = sessionsByPlayer[player]
 	if not session then
@@ -164,18 +295,22 @@ local function endSession(player: Player)
 
 	if session.target:IsDescendantOf(workspace) then
 		stopTargetMotion(session.target)
+		setNetworkOwner(session.target, nil, false)
+		destroyModelRig(session.modelRig)
 		setNetworkOwner(session.target, nil, true)
+	else
+		destroyModelRig(session.modelRig)
 	end
 end
 
-beginDragRemote.OnServerInvoke = function(player: Player, target: any, hitPosition: any): boolean
+beginDragRemote.OnServerInvoke = function(player: Player, target: any, hitPosition: any): (boolean, DragTarget?)
 	endSession(player)
 
 	if not isValidTarget(target) or typeof(hitPosition) ~= "Vector3" or not isFiniteVector(hitPosition) then
 		return false
 	end
 
-	local typedTarget = target :: DragTarget
+	local typedTarget = getPreferredTarget(target :: DragTarget)
 	local root = getCharacterRoot(player)
 	if not root
 		or (root.Position - hitPosition).Magnitude > config.MAX_GRAB_DISTANCE
@@ -185,6 +320,7 @@ beginDragRemote.OnServerInvoke = function(player: Player, target: any, hitPositi
 		return false
 	end
 
+	local modelRig = if typedTarget:IsA("Model") then createModelRig(typedTarget, hitPosition) else nil
 	local pivot = typedTarget:GetPivot()
 	local boxCFrame, boxSize = dragCollision.getBoundingBox(typedTarget)
 	local collisionMode = getCollisionMode(typedTarget)
@@ -197,6 +333,7 @@ beginDragRemote.OnServerInvoke = function(player: Player, target: any, hitPositi
 		boxOffset = pivot:ToObjectSpace(boxCFrame),
 		boxSize = boxSize,
 		lastPivot = pivot,
+		modelRig = modelRig,
 	}
 	ownerByTarget[typedTarget] = player
 	if collisionMode == config.COLLISION_MODE_COLLIDE then
@@ -205,7 +342,7 @@ beginDragRemote.OnServerInvoke = function(player: Player, target: any, hitPositi
 		setNetworkOwner(typedTarget, player, false)
 	end
 	stopTargetMotion(typedTarget)
-	return true
+	return true, typedTarget
 end
 
 updateDragRemote.OnServerEvent:Connect(function(player: Player, target: any, desiredPivot: any)
