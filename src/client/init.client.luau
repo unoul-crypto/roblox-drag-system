@@ -2,6 +2,7 @@ local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
@@ -24,6 +25,9 @@ type DragState = {
 	rotationMode: string,
 	boxOffset: CFrame,
 	boxSize: Vector3,
+	weight: number,
+	usesPhysics: boolean,
+	dragVelocity: CFrame,
 	marker: BasePart,
 	parts: {BasePart},
 	lastUpdate: number,
@@ -148,6 +152,23 @@ local function getRotationMode(target: DragTarget): string
 	return config.DEFAULT_ROTATION_MODE
 end
 
+local function getWeight(target: DragTarget): number
+	local weight = target:GetAttribute(config.WEIGHT_ATTRIBUTE)
+	if typeof(weight) ~= "number"
+		or weight ~= weight
+		or weight <= 0
+		or weight == math.huge
+	then
+		return 0
+	end
+
+	return weight
+end
+
+local function shouldUsePhysics(weight: number): boolean
+	return weight > 0 and config.WEIGHT_DRAG_MODE == config.WEIGHT_DRAG_MODE_PHYSICS
+end
+
 local function setHoveredTarget(target: DragTarget?)
 	if hoveredTarget == target then
 		return
@@ -221,7 +242,9 @@ local function finishDrag(notifyServer: boolean)
 
 	dragState = nil
 	state.marker:Destroy()
-	stopTargetMotion(state.parts)
+	if not state.usesPhysics then
+		stopTargetMotion(state.parts)
+	end
 
 	if notifyServer then
 		endDragRemote:FireServer(state.target)
@@ -269,6 +292,7 @@ local function startDrag()
 
 	local pivot = target:GetPivot()
 	local boxCFrame, boxSize = dragCollision.getBoundingBox(target)
+	local weight = getWeight(target)
 	local marker = createGrabMarker()
 	marker.Position = result.Position
 	dragState = {
@@ -281,6 +305,9 @@ local function startDrag()
 		rotationMode = getRotationMode(target),
 		boxOffset = pivot:ToObjectSpace(boxCFrame),
 		boxSize = boxSize,
+		weight = weight,
+		usesPhysics = shouldUsePhysics(weight),
+		dragVelocity = CFrame.new(),
 		marker = marker,
 		parts = getTargetParts(target),
 		lastUpdate = 0,
@@ -288,7 +315,7 @@ local function startDrag()
 	setHoveredTarget(nil)
 end
 
-local function updateDrag()
+local function updateDrag(deltaTime: number)
 	local state = dragState
 	if not state then
 		return
@@ -330,21 +357,43 @@ local function updateDrag()
 	end
 
 	local desiredPivot = CFrame.new(targetGrabPosition) * desiredRotation * CFrame.new(-state.localGrabPoint)
-	local resolvedPivot = desiredPivot
-	if state.collisionMode == config.COLLISION_MODE_COLLIDE then
-		resolvedPivot = dragCollision.resolvePivot(
-			state.target,
-			player.Character,
-			state.target:GetPivot(),
-			desiredPivot,
-			state.boxOffset,
-			state.boxSize
-		)
-	end
+	if state.usesPhysics then
+		local actualPivot = state.target:GetPivot()
+		state.marker.Position = actualPivot:PointToWorldSpace(state.localGrabPoint)
+	else
+		local currentPivot = state.target:GetPivot()
+		local movementPivot = desiredPivot
+		if state.weight > 0 then
+			local smoothTime = math.max(state.weight * config.WEIGHT_SMOOTH_TIME_SCALE, 1 / 240)
+			movementPivot, state.dragVelocity = TweenService:SmoothDamp(
+				currentPivot,
+				desiredPivot,
+				state.dragVelocity,
+				smoothTime,
+				math.huge,
+				deltaTime
+			)
+		end
 
-	state.target:PivotTo(resolvedPivot)
-	stopTargetMotion(state.parts)
-	state.marker.Position = resolvedPivot:PointToWorldSpace(state.localGrabPoint)
+		local resolvedPivot = movementPivot
+		if state.collisionMode == config.COLLISION_MODE_COLLIDE then
+			resolvedPivot = dragCollision.resolvePivot(
+				state.target,
+				player.Character,
+				currentPivot,
+				movementPivot,
+				state.boxOffset,
+				state.boxSize
+			)
+			if resolvedPivot ~= movementPivot then
+				state.dragVelocity = CFrame.new()
+			end
+		end
+
+		state.target:PivotTo(resolvedPivot)
+		stopTargetMotion(state.parts)
+		state.marker.Position = resolvedPivot:PointToWorldSpace(state.localGrabPoint)
+	end
 
 	local now = os.clock()
 	if now - state.lastUpdate >= config.UPDATE_RATE then
@@ -373,7 +422,7 @@ player.CharacterRemoving:Connect(function()
 	finishDrag(true)
 end)
 
-RunService:BindToRenderStep("DragSystem", Enum.RenderPriority.Camera.Value + 1, function()
+RunService:BindToRenderStep("DragSystem", Enum.RenderPriority.Camera.Value + 1, function(deltaTime: number)
 	updateHover()
-	updateDrag()
+	updateDrag(deltaTime)
 end)
