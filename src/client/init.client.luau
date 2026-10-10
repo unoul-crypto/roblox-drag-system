@@ -8,6 +8,7 @@ local UserInputService = game:GetService("UserInputService")
 local player = Players.LocalPlayer
 local config = require(ReplicatedStorage.Shared.DragConfig)
 local dragCollision = require(ReplicatedStorage.Shared.DragCollision)
+local dragWeight = require(ReplicatedStorage.Shared.DragWeight)
 local remotes = ReplicatedStorage:WaitForChild("DragRemotes")
 local beginDragRemote = remotes:WaitForChild("BeginDrag") :: RemoteFunction
 local updateDragRemote = remotes:WaitForChild("UpdateDrag") :: RemoteEvent
@@ -153,16 +154,7 @@ local function getRotationMode(target: DragTarget): string
 end
 
 local function getWeight(target: DragTarget): number
-	local weight = target:GetAttribute(config.WEIGHT_ATTRIBUTE)
-	if typeof(weight) ~= "number"
-		or weight ~= weight
-		or weight <= 0
-		or weight == math.huge
-	then
-		return 0
-	end
-
-	return weight
+	return dragWeight.normalize(target:GetAttribute(config.WEIGHT_ATTRIBUTE))
 end
 
 local function shouldUsePhysics(weight: number): boolean

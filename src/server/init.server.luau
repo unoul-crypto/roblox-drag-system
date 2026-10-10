@@ -6,6 +6,7 @@ local TweenService = game:GetService("TweenService")
 
 local config = require(ReplicatedStorage.Shared.DragConfig)
 local dragCollision = require(ReplicatedStorage.Shared.DragCollision)
+local dragWeight = require(ReplicatedStorage.Shared.DragWeight)
 local dragServer = require(script.DragServer)
 
 type DragTarget = BasePart | Model
@@ -123,16 +124,7 @@ local function getRotationMode(target: DragTarget): string
 end
 
 local function getWeight(target: DragTarget): number
-	local weight = target:GetAttribute(config.WEIGHT_ATTRIBUTE)
-	if typeof(weight) ~= "number"
-		or weight ~= weight
-		or weight <= 0
-		or weight == math.huge
-	then
-		return 0
-	end
-
-	return weight
+	return dragWeight.normalize(target:GetAttribute(config.WEIGHT_ATTRIBUTE))
 end
 
 local function shouldUsePhysics(weight: number): boolean
@@ -393,17 +385,9 @@ local function createPhysicsDragRig(
 	attachment.Position = root.CFrame:PointToObjectSpace(hitPosition)
 	attachment.Parent = root
 
-	local resistance = 1 + weight * config.PHYSICS_WEIGHT_RESISTANCE_SCALE
+	local physicsSettings = dragWeight.getPhysicsSettings(weight, config)
 	local assemblyMass = math.max(root.AssemblyMass, 0.001)
 	local gravity = math.max(workspace.Gravity, 1)
-	local forceMultiplier = math.max(
-		config.PHYSICS_FORCE_GRAVITY_MULTIPLIER / resistance,
-		config.PHYSICS_MIN_FORCE_GRAVITY_MULTIPLIER
-	)
-	local orientationTorqueMultiplier = math.max(
-		config.PHYSICS_ORIENTATION_TORQUE_MULTIPLIER / resistance,
-		config.PHYSICS_MIN_ORIENTATION_TORQUE_MULTIPLIER
-	)
 	local objectRadius = math.max(boxSize.Magnitude * 0.5, 0.5)
 
 	local alignPosition = Instance.new("AlignPosition")
@@ -414,15 +398,9 @@ local function createPhysicsDragRig(
 	alignPosition.ApplyAtCenterOfMass = false
 	alignPosition.ReactionForceEnabled = false
 	alignPosition.RigidityEnabled = false
-	alignPosition.MaxForce = assemblyMass * gravity * forceMultiplier
-	alignPosition.MaxVelocity = math.max(
-		config.PHYSICS_MAX_VELOCITY / resistance,
-		config.PHYSICS_MIN_MAX_VELOCITY
-	)
-	alignPosition.Responsiveness = math.max(
-		config.PHYSICS_POSITION_RESPONSIVENESS / resistance,
-		config.PHYSICS_MIN_POSITION_RESPONSIVENESS
-	)
+	alignPosition.MaxForce = assemblyMass * gravity * physicsSettings.forceGravityMultiplier
+	alignPosition.MaxVelocity = physicsSettings.maxVelocity
+	alignPosition.Responsiveness = physicsSettings.positionResponsiveness
 	alignPosition.Parent = container
 
 	local alignOrientation = Instance.new("AlignOrientation")
@@ -432,15 +410,9 @@ local function createPhysicsDragRig(
 	alignOrientation.CFrame = root.CFrame.Rotation
 	alignOrientation.ReactionTorqueEnabled = false
 	alignOrientation.RigidityEnabled = false
-	alignOrientation.MaxTorque = assemblyMass * gravity * objectRadius * orientationTorqueMultiplier
-	alignOrientation.MaxAngularVelocity = math.max(
-		config.PHYSICS_MAX_ANGULAR_VELOCITY / resistance,
-		config.PHYSICS_MIN_MAX_ANGULAR_VELOCITY
-	)
-	alignOrientation.Responsiveness = math.max(
-		config.PHYSICS_ORIENTATION_RESPONSIVENESS / resistance,
-		config.PHYSICS_MIN_ORIENTATION_RESPONSIVENESS
-	)
+	alignOrientation.MaxTorque = assemblyMass * gravity * objectRadius * physicsSettings.orientationTorqueMultiplier
+	alignOrientation.MaxAngularVelocity = physicsSettings.maxAngularVelocity
+	alignOrientation.Responsiveness = physicsSettings.orientationResponsiveness
 	alignOrientation.Parent = container
 
 	return {
