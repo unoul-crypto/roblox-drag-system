@@ -9,6 +9,8 @@ local player = Players.LocalPlayer
 local config = require(ReplicatedStorage.Shared.DragConfig)
 local dragCollision = require(ReplicatedStorage.Shared.DragCollision)
 local dragAssembly = require(ReplicatedStorage.Shared.DragAssembly)
+local dragManipulation = require(ReplicatedStorage.Shared.DragManipulation)
+local DragInputController = require(ReplicatedStorage.Shared.DragInputController)
 local weldConfig = require(ReplicatedStorage.Shared.WeldConfig)
 local objectTargets = require(ReplicatedStorage.Shared.ObjectTargets)
 local remotes = ReplicatedStorage:WaitForChild("DragRemotes")
@@ -28,6 +30,7 @@ type DragState = {
 	grabDistance: number,
 	rotation: CFrame,
 	cameraRelativeRotation: CFrame,
+	rotationEdited: boolean,
 	collisionMode: string,
 	rotationMode: string,
 	boxOffset: CFrame,
@@ -44,6 +47,11 @@ local hoveredTarget: DragTarget? = nil
 local dragState: DragState? = nil
 local requestInFlight = false
 local inputVersion = 0
+local inputController = DragInputController.new(player, function(wheel: number)
+	if dragState then
+		dragState.grabDistance = dragManipulation.adjustDistance(dragState.grabDistance, wheel, config)
+	end
+end)
 
 local function isConnectionToolEquipped(): boolean
 	for _, name in {weldConfig.TOOL_NAME, weldConfig.UNWELD_TOOL_NAME} do
@@ -186,6 +194,7 @@ local function finishDrag(notifyServer: boolean)
 	end
 
 	dragState = nil
+	inputController:SetDragging(false)
 	state.marker:Destroy()
 	if not state.usesPhysics then
 		stopTargetMotion(state.parts)
@@ -263,6 +272,7 @@ local function startDrag()
 		grabDistance = grabDistance,
 		rotation = payload.rotation,
 		cameraRelativeRotation = camera.CFrame.Rotation:ToObjectSpace(payload.rotation),
+		rotationEdited = false,
 		collisionMode = payload.collisionMode,
 		rotationMode = payload.rotationMode,
 		boxOffset = assembly.boxOffset,
@@ -274,6 +284,7 @@ local function startDrag()
 		parts = assembly.parts,
 		lastUpdate = 0,
 	}
+	inputController:SetDragging(true)
 	setHoveredTarget(nil)
 end
 
@@ -321,8 +332,14 @@ local function updateDrag(deltaTime: number)
 	if state.rotationMode == config.ROTATION_MODE_CAMERA_RELATIVE then
 		desiredRotation = camera.CFrame.Rotation * state.cameraRelativeRotation
 	end
+	local pitch, yaw = inputController:GetRotationInput()
+	if pitch ~= 0 or yaw ~= 0 then
+		desiredRotation = dragManipulation.rotate(desiredRotation, camera.CFrame.Rotation, pitch, yaw, deltaTime, config)
+		state.rotation, state.rotationEdited = desiredRotation, true
+		state.cameraRelativeRotation = camera.CFrame.Rotation:ToObjectSpace(desiredRotation)
+	end
 
-	local desiredPivot = CFrame.new(targetGrabPosition) * desiredRotation * CFrame.new(-state.localGrabPoint)
+	local desiredPivot = dragManipulation.desiredPivot(targetGrabPosition, desiredRotation, state.localGrabPoint)
 	if state.usesPhysics or not state.clientAuthoritative then
 		local actualPivot = dragAssembly.getPivot(state.assembly)
 		state.marker.Position = actualPivot:PointToWorldSpace(state.localGrabPoint)
@@ -364,7 +381,7 @@ local function updateDrag(deltaTime: number)
 	local now = os.clock()
 	if now - state.lastUpdate >= config.UPDATE_RATE then
 		state.lastUpdate = now
-		updateDragRemote:FireServer(state.target, desiredPivot, state.id)
+		updateDragRemote:FireServer(state.target, desiredPivot, state.id, state.rotationEdited)
 	end
 end
 
@@ -390,11 +407,25 @@ player.CharacterRemoving:Connect(function()
 	finishDrag(true)
 end)
 
+UserInputService.WindowFocusReleased:Connect(function()
+	inputVersion += 1
+	finishDrag(true)
+end)
+
 dragEndedRemote.OnClientEvent:Connect(function(target: Instance, sessionId: number)
 	if dragState and dragState.target == target and dragState.id == sessionId then finishDrag(false) end
 end)
 
 RunService:BindToRenderStep("DragSystem", Enum.RenderPriority.Camera.Value + 1, function(deltaTime: number)
+	inputController:Update()
 	updateHover()
 	updateDrag(deltaTime)
+end)
+
+script.Destroying:Connect(function()
+	inputVersion += 1
+	finishDrag(true)
+	inputController:Destroy()
+	RunService:UnbindFromRenderStep("DragSystem")
+	hoverHighlight:Destroy()
 end)

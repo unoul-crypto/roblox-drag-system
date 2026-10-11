@@ -546,7 +546,7 @@ beginDragRemote.OnServerInvoke = function(player: Player, target: any, hitPositi
 	return accepted, acceptedTarget, payload
 end
 
-updateDragRemote.OnServerEvent:Connect(function(player: Player, target: any, desiredPivot: any, sessionId: any)
+updateDragRemote.OnServerEvent:Connect(function(player: Player, target: any, desiredPivot: any, sessionId: any, rotationEdited: any)
 	local session = sessionsByPlayer[player]
 	if not session or target ~= session.target or sessionId ~= session.id then
 		return
@@ -563,9 +563,10 @@ updateDragRemote.OnServerEvent:Connect(function(player: Player, target: any, des
 
 	local root = getCharacterRoot(player)
 	local desiredRotation = session.rotation
-	if session.rotationMode == config.ROTATION_MODE_CAMERA_RELATIVE then
+	if session.rotationMode == config.ROTATION_MODE_CAMERA_RELATIVE or rotationEdited == true then
 		desiredRotation = desiredPivot.Rotation
 	end
+	if rotationEdited == true then session.rotation = desiredRotation end
 	local sanitizedPivot = CFrame.new(desiredPivot.Position) * desiredRotation
 	local grabPosition = sanitizedPivot:PointToWorldSpace(session.localGrabPoint)
 	if not root or (root.Position - grabPosition).Magnitude > config.MAX_GRAB_DISTANCE then

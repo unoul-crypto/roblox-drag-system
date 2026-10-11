@@ -30,24 +30,58 @@ Vector.__mul = function(a, b) return vector(a.X * b, a.Y * b, a.Z * b) end
 Vector.__unm = function(a) return a * -1 end
 function Vector:Min(b) return vector(math.min(self.X, b.X), math.min(self.Y, b.Y), math.min(self.Z, b.Z)) end
 function Vector:Max(b) return vector(math.max(self.X, b.X), math.max(self.Y, b.Y), math.max(self.Z, b.Z)) end
-Mock.Vector3 = {new = vector, one = vector(1, 1, 1), zero = vector(0, 0, 0)}
+Mock.Vector3 = {new = vector, one = vector(1, 1, 1), zero = vector(0, 0, 0), yAxis = vector(0, 1, 0)}
 
 local Frame = {}
+local function frame(position, matrix)
+	return setmetatable({_kind = "CFrame", Position = position,
+		matrix = matrix or {1, 0, 0, 0, 1, 0, 0, 0, 1}}, Frame)
+end
+local function transform(matrix, point)
+	return vector(matrix[1] * point.X + matrix[2] * point.Y + matrix[3] * point.Z,
+		matrix[4] * point.X + matrix[5] * point.Y + matrix[6] * point.Z,
+		matrix[7] * point.X + matrix[8] * point.Y + matrix[9] * point.Z)
+end
 Frame.__index = function(frame, key)
-	if key == "Rotation" then return Mock.CFrame.new() end
-	if key == "XVector" then return vector(1, 0, 0) end
-	if key == "YVector" then return vector(0, 1, 0) end
-	if key == "ZVector" then return vector(0, 0, 1) end
+	local matrix = frame.matrix
+	if key == "Rotation" then return Mock.CFrame.newWithMatrix(vector(0, 0, 0), table.clone(matrix)) end
+	if key == "XVector" or key == "RightVector" then return vector(matrix[1], matrix[4], matrix[7]) end
+	if key == "YVector" then return vector(matrix[2], matrix[5], matrix[8]) end
+	if key == "ZVector" then return vector(matrix[3], matrix[6], matrix[9]) end
 	return Frame[key]
 end
 Mock.CFrame = {new = function(x, y, z)
 	local position = if type(x) == "table" then x else vector(x or 0, y or 0, z or 0)
-	return setmetatable({_kind = "CFrame", Position = position}, Frame)
+	return frame(position)
 end}
-Frame.__mul = function(a, b) return Mock.CFrame.new(a.Position + b.Position) end
-function Frame:Inverse() return Mock.CFrame.new(-self.Position) end
-function Frame:PointToObjectSpace(point) return point - self.Position end
-function Frame:PointToWorldSpace(point) return point + self.Position end
+Mock.CFrame.newWithMatrix = frame
+function Mock.CFrame.fromAxisAngle(axis, angle)
+	local x, y, z = axis.X, axis.Y, axis.Z
+	local c, s, t = math.cos(angle), math.sin(angle), 1 - math.cos(angle)
+	return frame(vector(0, 0, 0), {
+		t*x*x+c, t*x*y-s*z, t*x*z+s*y,
+		t*x*y+s*z, t*y*y+c, t*y*z-s*x,
+		t*x*z-s*y, t*y*z+s*x, t*z*z+c,
+	})
+end
+Frame.__mul = function(a, b)
+	local matrix = {}
+	for row = 0, 2 do
+		for col = 1, 3 do
+			local index = row * 3 + col
+			matrix[index] = a.matrix[row*3+1]*b.matrix[col]
+				+ a.matrix[row*3+2]*b.matrix[3+col] + a.matrix[row*3+3]*b.matrix[6+col]
+		end
+	end
+	return frame(a.Position + transform(a.matrix, b.Position), matrix)
+end
+function Frame:Inverse()
+	local m = self.matrix
+	local inverse = {m[1], m[4], m[7], m[2], m[5], m[8], m[3], m[6], m[9]}
+	return frame(transform(inverse, -self.Position), inverse)
+end
+function Frame:PointToObjectSpace(point) return self:Inverse():PointToWorldSpace(point) end
+function Frame:PointToWorldSpace(point) return self.Position + transform(self.matrix, point) end
 function Frame:ToObjectSpace(other) return self:Inverse() * other end
 
 local methods = {}
@@ -55,7 +89,7 @@ local instances = {}
 local meta = {}
 meta.__index = function(object, key)
 	if methods[key] then return methods[key] end
-	if key == "Position" then return object._properties.CFrame.Position end
+	if key == "Position" and object._properties.Position == nil then return object._properties.CFrame.Position end
 	if object._properties[key] ~= nil then return object._properties[key] end
 	for _, child in object._children do if child.Name == key then return child end end
 	return nil
@@ -153,6 +187,7 @@ function methods:SetNetworkOwner(player) self._properties.networkOwner = player 
 function methods:GetNetworkOwner() return self._properties.networkOwner end
 function methods:SetNetworkOwnershipAuto() self._properties.networkOwner = nil end
 function methods:FireClient(player, ...) self._properties.lastClientEvent = {player, ...} end
+function methods:Move(direction) self._properties.moveDirection = direction end
 
 Mock.workspace = Mock.Instance.new("Workspace")
 Mock.workspace.Gravity = 196.2
@@ -182,8 +217,18 @@ end
 function players:GetPlayers() return self:GetChildren() end
 Mock.services = {CollectionService = collection, Players = players,
 	ReplicatedStorage = Mock.Instance.new("ReplicatedStorage"), RunService = {Heartbeat = signal()}, TweenService = {}}
+local actions = {bindings = {}}
+function actions:BindActionAtPriority(name, callback, _, priority, ...)
+	self.bindings[name] = {callback = callback, priority = priority, inputs = {...}}
+end
+function actions:UnbindAction(name) self.bindings[name] = nil end
+local inputs = {keys = {}, focused = nil}
+function inputs:IsKeyDown(key) return self.keys[key] == true end
+function inputs:GetFocusedTextBox() return self.focused end
+Mock.services.ContextActionService, Mock.services.UserInputService = actions, inputs
 Mock.game = {GetService = function(_, name) return assert(Mock.services[name], name) end}
 Mock.Enum = setmetatable({}, {__index = function(_, key) return setmetatable({}, {__index = function(_, value) return key .. "." .. value end}) end})
+Mock.Enum.ContextActionPriority = {High = {Value = 3000}}
 Mock.Color3 = {fromRGB = function(...) return {...} end, new = function(...) return {...} end}
 function Mock.typeof(value) return if type(value) == "table" and value._kind then value._kind else typeof(value) end
 function Mock.part(name, x, parent)
@@ -194,6 +239,7 @@ end
 function Mock.player(id)
 	local player = Mock.Instance.new("Player")
 	player.UserId, player.Parent = id, players
+	player.CameraMinZoomDistance, player.CameraMaxZoomDistance = 0.5, 128
 	player.Character = Mock.Instance.new("Model")
 	player.Character.Parent = Mock.workspace
 	Mock.part("HumanoidRootPart", 0, player.Character)

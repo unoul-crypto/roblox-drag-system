@@ -12,6 +12,11 @@ return table.freeze({
 	ROTATION_MODE_WORLD = "World",
 	DEFAULT_ROTATION_MODE = "World",
 
+	MANIPULATION_ROTATION_SPEED = 90, -- Degrees per second while holding Shift.
+	MANIPULATION_DISTANCE_STEP = 1, -- Studs per wheel notch; positive scroll moves closer.
+	MANIPULATION_MIN_DISTANCE = 2, -- Distance from camera to the grab point, in studs.
+	MANIPULATION_MAX_DISTANCE = 24,
+
 	WEIGHT_ATTRIBUTE = "weight",
 	WEIGHT_DRAG_MODE_SMOOTH_DAMP = "SmoothDamp",
 	WEIGHT_DRAG_MODE_PHYSICS = "Physics",
