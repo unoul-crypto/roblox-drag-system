@@ -7,7 +7,11 @@ local TweenService = game:GetService("TweenService")
 local config = require(ReplicatedStorage.Shared.DragConfig)
 local dragCollision = require(ReplicatedStorage.Shared.DragCollision)
 local dragWeight = require(ReplicatedStorage.Shared.DragWeight)
+local dragAssembly = require(ReplicatedStorage.Shared.DragAssembly)
+local objectTargets = require(ReplicatedStorage.Shared.ObjectTargets)
 local dragServer = require(script.DragServer)
+local weldServer = require(script.WeldServer)
+local interactionLocks = require(script.InteractionLocks)
 
 type DragTarget = BasePart | Model
 
@@ -17,7 +21,7 @@ type PartState = {
 }
 
 type ModelRig = {
-	model: Model,
+	model: Model?,
 	root: BasePart,
 	container: Folder,
 	partStates: {PartState},
@@ -37,11 +41,14 @@ type PhysicsDragRig = {
 	alignPosition: AlignPosition,
 	alignOrientation: AlignOrientation,
 	collisionStates: {CollisionState},
-	partState: PartState?,
 }
 
 type DragSession = {
+	id: number,
 	target: DragTarget,
+	members: {DragTarget},
+	assembly: dragAssembly.Snapshot,
+	release: () -> (),
 	localGrabPoint: Vector3,
 	rotation: CFrame,
 	collisionMode: string,
@@ -53,7 +60,13 @@ type DragSession = {
 	dragVelocity: CFrame,
 	lastUpdateAt: number,
 	clientAuthoritative: boolean,
-	kinematicPartState: PartState?,
+	modelRig: ModelRig?,
+	physicsRig: PhysicsDragRig?,
+}
+
+type PendingRequest = {
+	cancelled: boolean,
+	release: (() -> ())?,
 	modelRig: ModelRig?,
 	physicsRig: PhysicsDragRig?,
 }
@@ -74,8 +87,14 @@ local endDragRemote = Instance.new("RemoteEvent")
 endDragRemote.Name = "EndDrag"
 endDragRemote.Parent = remotes
 
+local dragEndedRemote = Instance.new("RemoteEvent")
+dragEndedRemote.Name = "DragEnded"
+dragEndedRemote.Parent = remotes
+
 local sessionsByPlayer: {[Player]: DragSession} = {}
 local ownerByTarget: {[Instance]: Player} = {}
+local pendingByPlayer: {[Player]: PendingRequest} = {}
+local nextSessionId = 0
 
 local function getCharacterRoot(player: Player): BasePart?
 	local character = player.Character
@@ -148,48 +167,18 @@ local function isValidTarget(target: any): boolean
 end
 
 local function getPreferredTarget(target: DragTarget): DragTarget
-	if target:IsA("Model") then
-		return target
-	end
-
-	local current = target.Parent
-	while current and current ~= workspace do
-		if current:IsA("Model")
-			and CollectionService:HasTag(current, config.TAG_NAME)
-			and current:FindFirstChildWhichIsA("BasePart", true)
-		then
-			return current
-		end
-		current = current.Parent
-	end
-
-	return target
+	return objectTargets.findTagged(target, config.TAG_NAME) or target
 end
 
 local function isPointInsideTarget(target: DragTarget, worldPoint: Vector3): boolean
-	local boxCFrame: CFrame
-	local boxSize: Vector3
-
-	if target:IsA("BasePart") then
-		boxCFrame = target.CFrame
-		boxSize = target.Size
-	else
-		boxCFrame, boxSize = target:GetBoundingBox()
-	end
-
-	local point = boxCFrame:PointToObjectSpace(worldPoint)
-	local halfSize = boxSize * 0.5 + Vector3.one
-	return math.abs(point.X) <= halfSize.X
-		and math.abs(point.Y) <= halfSize.Y
-		and math.abs(point.Z) <= halfSize.Z
+	return objectTargets.containsPoint(target, worldPoint)
 end
 
-local function setNetworkOwner(target: DragTarget, owner: Player?, automatic: boolean?)
-	local parts = if target:IsA("BasePart") then {target} else target:GetDescendants()
+local function setNetworkOwner(parts: {BasePart}, owner: Player?, automatic: boolean?)
 	local handledAssemblies: {[BasePart]: boolean} = {}
 
 	for _, descendant in parts do
-		if descendant:IsA("BasePart") and not descendant.Anchored then
+		if descendant:IsDescendantOf(workspace) and not descendant.Anchored then
 			local assemblyRoot = descendant.AssemblyRootPart or descendant
 			if not handledAssemblies[assemblyRoot] then
 				handledAssemblies[assemblyRoot] = true
@@ -208,8 +197,7 @@ local function setNetworkOwner(target: DragTarget, owner: Player?, automatic: bo
 	end
 end
 
-local function isNetworkOwnedBy(target: DragTarget, player: Player): boolean
-	local parts = if target:IsA("BasePart") then {target} else target:GetDescendants()
+local function isNetworkOwnedBy(parts: {BasePart}, player: Player): boolean
 	local handledAssemblies: {[BasePart]: boolean} = {}
 	local foundAssembly = false
 
@@ -229,24 +217,13 @@ local function isNetworkOwnedBy(target: DragTarget, player: Player): boolean
 	return foundAssembly
 end
 
-local function stopTargetMotion(target: DragTarget)
-	local parts = if target:IsA("BasePart") then {target} else target:GetDescendants()
+local function stopTargetMotion(parts: {BasePart})
 	for _, descendant in parts do
 		if descendant:IsA("BasePart") and not descendant.Anchored then
 			descendant.AssemblyLinearVelocity = Vector3.zero
 			descendant.AssemblyAngularVelocity = Vector3.zero
 		end
 	end
-end
-
-local function getModelParts(model: Model): {BasePart}
-	local parts = {}
-	for _, descendant in model:GetDescendants() do
-		if descendant:IsA("BasePart") then
-			table.insert(parts, descendant)
-		end
-	end
-	return parts
 end
 
 local function findRigRoot(model: Model, parts: {BasePart}, hitPosition: Vector3): BasePart
@@ -277,11 +254,11 @@ local function findRigRoot(model: Model, parts: {BasePart}, hitPosition: Vector3
 end
 
 
-local function createModelRig(model: Model, hitPosition: Vector3): ModelRig
-	local parts = getModelParts(model)
-	local root = findRigRoot(model, parts, hitPosition)
+local function createModelRig(target: DragTarget, parts: {BasePart}, hitPosition: Vector3): ModelRig
+	local model = if target:IsA("Model") then target else nil
+	local root = if model then findRigRoot(model, parts, hitPosition) else target :: BasePart
 	local partStates = {}
-	local originalPrimaryPart = model.PrimaryPart
+	local originalPrimaryPart = if model then model.PrimaryPart else nil
 
 	-- A Model is only a container; its parts can otherwise fall independently.
 	-- Temporarily make it one unanchored assembly while it is being dragged.
@@ -295,7 +272,7 @@ local function createModelRig(model: Model, hitPosition: Vector3): ModelRig
 
 	local container = Instance.new("Folder")
 	container.Name = "DragSystemTemporaryRig"
-	container.Parent = model
+	container.Parent = target
 
 	for _, part in parts do
 		if part ~= root then
@@ -306,7 +283,7 @@ local function createModelRig(model: Model, hitPosition: Vector3): ModelRig
 			weld.Parent = container
 		end
 	end
-	model.PrimaryPart = root
+	if model then model.PrimaryPart = root end
 
 	return {
 		model = model,
@@ -326,6 +303,7 @@ local function destroyModelRig(rig: ModelRig?)
 		rig.container:Destroy()
 	end
 	pcall(function()
+		if not rig.model then return end
 		if rig.originalPrimaryPart and rig.originalPrimaryPart:IsDescendantOf(rig.model) then
 			rig.model.PrimaryPart = rig.originalPrimaryPart
 		else
@@ -339,14 +317,6 @@ local function destroyModelRig(rig: ModelRig?)
 	end
 end
 
-local function getTargetParts(target: DragTarget): {BasePart}
-	if target:IsA("BasePart") then
-		return {target}
-	end
-
-	return getModelParts(target)
-end
-
 local function createPhysicsDragRig(
 	target: DragTarget,
 	root: BasePart,
@@ -354,20 +324,12 @@ local function createPhysicsDragRig(
 	hitPosition: Vector3,
 	boxSize: Vector3,
 	collisionMode: string,
-	weight: number
+	weight: number,
+	parts: {BasePart}
 ): PhysicsDragRig
-	local partState: PartState? = nil
-	if target:IsA("BasePart") then
-		partState = {
-			part = target,
-			anchored = target.Anchored,
-		}
-		target.Anchored = false
-	end
-
 	local collisionStates = {}
 	if collisionMode == config.COLLISION_MODE_NO_CLIP then
-		for _, part in getTargetParts(target) do
+		for _, part in parts do
 			table.insert(collisionStates, {
 				part = part,
 				canCollide = part.CanCollide,
@@ -423,7 +385,6 @@ local function createPhysicsDragRig(
 		alignPosition = alignPosition,
 		alignOrientation = alignOrientation,
 		collisionStates = collisionStates,
-		partState = partState,
 	}
 end
 
@@ -445,15 +406,6 @@ local function destroyPhysicsDragRig(rig: PhysicsDragRig?)
 		end
 	end
 
-	if rig.partState and rig.partState.part.Parent then
-		rig.partState.part.Anchored = rig.partState.anchored
-	end
-end
-
-local function restorePartState(state: PartState?)
-	if state and state.part.Parent then
-		state.part.Anchored = state.anchored
-	end
 end
 
 local function endSession(player: Player)
@@ -463,25 +415,20 @@ local function endSession(player: Player)
 	end
 
 	sessionsByPlayer[player] = nil
-	if ownerByTarget[session.target] == player then
-		ownerByTarget[session.target] = nil
+	for _, member in session.members do
+		if ownerByTarget[member] == player then ownerByTarget[member] = nil end
 	end
 
-	if session.target:IsDescendantOf(workspace) then
-		stopTargetMotion(session.target)
-		setNetworkOwner(session.target, nil, false)
-		destroyPhysicsDragRig(session.physicsRig)
-		destroyModelRig(session.modelRig)
-		restorePartState(session.kinematicPartState)
-		setNetworkOwner(session.target, nil, true)
-	else
-		destroyPhysicsDragRig(session.physicsRig)
-		destroyModelRig(session.modelRig)
-		restorePartState(session.kinematicPartState)
-	end
+	stopTargetMotion(session.assembly.parts)
+	setNetworkOwner(session.assembly.parts, nil, false)
+	destroyPhysicsDragRig(session.physicsRig)
+	destroyModelRig(session.modelRig)
+	setNetworkOwner(session.assembly.parts, nil, true)
+	session.release()
+	if player.Parent == Players then dragEndedRemote:FireClient(player, session.target, session.id) end
 end
 
-beginDragRemote.OnServerInvoke = function(player: Player, target: any, hitPosition: any): (boolean, DragTarget?)
+local function beginDrag(player: Player, target: any, hitPosition: any, request: PendingRequest): (boolean, DragTarget?, any?)
 	endSession(player)
 
 	if not isValidTarget(target) or typeof(hitPosition) ~= "Vector3" or not isFiniteVector(hitPosition) then
@@ -497,20 +444,31 @@ beginDragRemote.OnServerInvoke = function(player: Player, target: any, hitPositi
 	then
 		return false
 	end
-	if not dragServer.CanGrab(typedTarget, player.UserId) then
-		return false
+	local members = weldServer.GetAssemblyTargets(typedTarget)
+	local parts = objectTargets.getParts(members)
+	local release = interactionLocks:TryAcquire(objectTargets.getLockKeys(members, parts))
+	if not release then return false end
+	request.release = release
+	for _, member in members do
+		if request.cancelled or not dragServer.CanGrab(member, player.UserId) then return false end
 	end
+	root = getCharacterRoot(player)
+	if request.cancelled or player.Parent ~= Players or not root or not isValidTarget(typedTarget)
+		or (root.Position - hitPosition).Magnitude > config.MAX_GRAB_DISTANCE
+		or not weldServer.IsSameAssembly(typedTarget, members) then return false end
+	for _, part in parts do if not part:IsDescendantOf(workspace) then return false end end
 
-	local modelRig = if typedTarget:IsA("Model") then createModelRig(typedTarget, hitPosition) else nil
+	local modelRig = createModelRig(typedTarget, parts, hitPosition)
+	request.modelRig = modelRig
 	local pivot = typedTarget:GetPivot()
-	local boxCFrame, boxSize = dragCollision.getBoundingBox(typedTarget)
+	local assembly = dragAssembly.capture(typedTarget, modelRig.root, parts)
+	local boxSize = assembly.boxSize
 	local collisionMode = getCollisionMode(typedTarget)
-	local weight = getWeight(typedTarget)
+	local weight = 0
+	for _, member in members do weight = math.min(weight + getWeight(member), 1e6) end
 	local physicsRig: PhysicsDragRig? = nil
 	if shouldUsePhysics(weight) then
-		local physicsRoot = if typedTarget:IsA("BasePart")
-			then typedTarget
-			else (modelRig :: ModelRig).root
+		local physicsRoot = modelRig.root
 		physicsRig = createPhysicsDragRig(
 			typedTarget,
 			physicsRoot,
@@ -518,50 +476,69 @@ beginDragRemote.OnServerInvoke = function(player: Player, target: any, hitPositi
 			hitPosition,
 			boxSize,
 			collisionMode,
-			weight
+			weight,
+			parts
 		)
-	end
-	local kinematicPartState: PartState? = nil
-	if not physicsRig and typedTarget:IsA("BasePart") and typedTarget.Anchored then
-		kinematicPartState = {
-			part = typedTarget,
-			anchored = true,
-		}
-		typedTarget.Anchored = false
+		request.physicsRig = physicsRig
 	end
 	local clientAuthoritative = false
 	if physicsRig then
-		setNetworkOwner(typedTarget, nil, false)
+		setNetworkOwner(parts, nil, false)
 	else
-		setNetworkOwner(typedTarget, player, false)
-		clientAuthoritative = isNetworkOwnedBy(typedTarget, player)
+		setNetworkOwner(parts, player, false)
+		clientAuthoritative = isNetworkOwnedBy(parts, player)
 	end
 
+	nextSessionId += 1
 	sessionsByPlayer[player] = {
+		id = nextSessionId,
 		target = typedTarget,
+		members = members,
+		assembly = assembly,
+		release = release,
 		localGrabPoint = pivot:PointToObjectSpace(hitPosition),
 		rotation = pivot.Rotation,
 		collisionMode = collisionMode,
 		rotationMode = getRotationMode(typedTarget),
-		boxOffset = pivot:ToObjectSpace(boxCFrame),
+		boxOffset = assembly.boxOffset,
 		boxSize = boxSize,
 		lastPivot = pivot,
 		weight = weight,
 		dragVelocity = CFrame.new(),
 		lastUpdateAt = os.clock(),
 		clientAuthoritative = clientAuthoritative,
-		kinematicPartState = kinematicPartState,
 		modelRig = modelRig,
 		physicsRig = physicsRig,
 	}
-	ownerByTarget[typedTarget] = player
-	stopTargetMotion(typedTarget)
-	return true, typedTarget
+	for _, member in members do ownerByTarget[member] = player end
+	stopTargetMotion(parts)
+	return true, typedTarget, {
+		id = nextSessionId, assembly = assembly, weight = weight,
+		rotation = pivot.Rotation, localGrabPoint = pivot:PointToObjectSpace(hitPosition),
+		collisionMode = collisionMode, rotationMode = getRotationMode(typedTarget),
+		clientAuthoritative = clientAuthoritative,
+	}
 end
 
-updateDragRemote.OnServerEvent:Connect(function(player: Player, target: any, desiredPivot: any)
+beginDragRemote.OnServerInvoke = function(player: Player, target: any, hitPosition: any)
+	if pendingByPlayer[player] then return false end
+	local request: PendingRequest = {cancelled = false}
+	pendingByPlayer[player] = request
+	local ok, accepted, acceptedTarget, payload = pcall(beginDrag, player, target, hitPosition, request)
+	pendingByPlayer[player] = nil
+	if not ok or not accepted then
+		destroyPhysicsDragRig(request.physicsRig)
+		destroyModelRig(request.modelRig)
+		if request.release then request.release() end
+		if not ok then warn("DragSystem: grab failed:", accepted) end
+		return false
+	end
+	return accepted, acceptedTarget, payload
+end
+
+updateDragRemote.OnServerEvent:Connect(function(player: Player, target: any, desiredPivot: any, sessionId: any)
 	local session = sessionsByPlayer[player]
-	if not session or target ~= session.target then
+	if not session or target ~= session.target or sessionId ~= session.id then
 		return
 	end
 
@@ -597,18 +574,18 @@ updateDragRemote.OnServerEvent:Connect(function(player: Player, target: any, des
 		local desiredRoot = sanitizedPivot * physicsRig.rootOffsetFromPivot
 		physicsRig.alignPosition.Position = grabPosition
 		physicsRig.alignOrientation.CFrame = desiredRoot.Rotation
-		session.lastPivot = session.target:GetPivot()
+		session.lastPivot = dragAssembly.getPivot(session.assembly)
 		return
 	end
 
 	if session.clientAuthoritative then
-		local actualPivot = session.target:GetPivot()
+		local actualPivot = dragAssembly.getPivot(session.assembly)
 		local actualGrabPosition = actualPivot:PointToWorldSpace(session.localGrabPoint)
 		if not isFiniteCFrame(actualPivot)
 			or (root.Position - actualGrabPosition).Magnitude
 				> config.MAX_GRAB_DISTANCE + config.CLIENT_OWNERSHIP_POSITION_TOLERANCE
 		then
-			session.target:PivotTo(session.lastPivot)
+			dragAssembly.move(session.assembly, session.lastPivot)
 			endSession(player)
 			return
 		end
@@ -636,7 +613,7 @@ updateDragRemote.OnServerEvent:Connect(function(player: Player, target: any, des
 	local resolvedPivot = movementPivot
 	if session.collisionMode == config.COLLISION_MODE_COLLIDE then
 		resolvedPivot = dragCollision.resolvePivot(
-			session.target,
+			session.assembly.parts,
 			player.Character,
 			session.lastPivot,
 			movementPivot,
@@ -648,22 +625,34 @@ updateDragRemote.OnServerEvent:Connect(function(player: Player, target: any, des
 		end
 	end
 
-	session.target:PivotTo(resolvedPivot)
+	dragAssembly.move(session.assembly, resolvedPivot)
 	session.lastPivot = resolvedPivot
-	stopTargetMotion(session.target)
+	stopTargetMotion(session.assembly.parts)
 end)
 
-endDragRemote.OnServerEvent:Connect(function(player: Player, target: any)
+endDragRemote.OnServerEvent:Connect(function(player: Player, target: any, sessionId: any)
 	local session = sessionsByPlayer[player]
-	if session and session.target == target then
+	if session and session.target == target and session.id == sessionId then
 		endSession(player)
 	end
 end)
 
-Players.PlayerRemoving:Connect(endSession)
+local function cancelPending(player: Player)
+	local request = pendingByPlayer[player]
+	if request then
+		request.cancelled = true
+		if request.release then request.release() end
+	end
+end
+
+Players.PlayerRemoving:Connect(function(player)
+	cancelPending(player)
+	endSession(player)
+end)
 
 local function watchPlayer(player: Player)
 	player.CharacterRemoving:Connect(function()
+		cancelPending(player)
 		endSession(player)
 	end)
 end
@@ -683,6 +672,12 @@ RunService.Heartbeat:Connect(function(deltaTime: number)
 
 	local sessionsToEnd = {}
 	for player, session in sessionsByPlayer do
+		local valid = getCharacterRoot(player) ~= nil and isValidTarget(session.target)
+			and weldServer.IsSameAssembly(session.target, session.members)
+		for _, part in session.assembly.parts do
+			if not part:IsDescendantOf(workspace) then valid = false; break end
+		end
+		if not valid then table.insert(sessionsToEnd, player); continue end
 		if session.clientAuthoritative then
 			local root = getCharacterRoot(player)
 			if not root or not session.target:IsDescendantOf(workspace) then
@@ -690,13 +685,13 @@ RunService.Heartbeat:Connect(function(deltaTime: number)
 				continue
 			end
 
-			local actualPivot = session.target:GetPivot()
+			local actualPivot = dragAssembly.getPivot(session.assembly)
 			local actualGrabPosition = actualPivot:PointToWorldSpace(session.localGrabPoint)
 			if not isFiniteCFrame(actualPivot)
 				or (root.Position - actualGrabPosition).Magnitude
 					> config.MAX_GRAB_DISTANCE + config.CLIENT_OWNERSHIP_POSITION_TOLERANCE
 			then
-				session.target:PivotTo(session.lastPivot)
+				dragAssembly.move(session.assembly, session.lastPivot)
 				table.insert(sessionsToEnd, player)
 			else
 				session.lastPivot = actualPivot

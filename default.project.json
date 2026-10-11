@@ -23,6 +23,12 @@
       }
     },
 
+    "StarterPack": {
+      "WeldTool": {
+        "$path": "src/tools/WeldTool"
+      }
+    },
+
     "Workspace": {
       "$ignoreUnknownInstances": true,
       "$properties": {

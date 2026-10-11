@@ -3,6 +3,7 @@ local config = require(script.Parent.DragConfig)
 local DragCollision = {}
 
 type DragTarget = BasePart | Model
+type CollisionTarget = DragTarget | {BasePart}
 
 local function getCastSize(size: Vector3): Vector3
 	local reduction = config.COLLISION_PADDING * 2
@@ -13,8 +14,8 @@ local function getCastSize(size: Vector3): Vector3
 	)
 end
 
-local function makeRaycastParams(target: DragTarget, character: Model?): RaycastParams
-	local excluded = {target}
+local function makeRaycastParams(target: CollisionTarget, character: Model?): RaycastParams
+	local excluded = if typeof(target) == "table" then table.clone(target) else {target}
 	if character then
 		table.insert(excluded, character)
 	end
@@ -27,8 +28,8 @@ local function makeRaycastParams(target: DragTarget, character: Model?): Raycast
 	return parameters
 end
 
-local function makeOverlapParams(target: DragTarget, character: Model?): OverlapParams
-	local excluded = {target}
+local function makeOverlapParams(target: CollisionTarget, character: Model?): OverlapParams
+	local excluded = if typeof(target) == "table" then table.clone(target) else {target}
 	if character then
 		table.insert(excluded, character)
 	end
@@ -49,7 +50,7 @@ function DragCollision.getBoundingBox(target: DragTarget): (CFrame, Vector3)
 end
 
 local function isBoxBlocked(
-	target: DragTarget,
+	target: CollisionTarget,
 	character: Model?,
 	boxCFrame: CFrame,
 	boxSize: Vector3
@@ -63,7 +64,7 @@ local function isBoxBlocked(
 end
 
 function DragCollision.resolvePivot(
-	target: DragTarget,
+	target: CollisionTarget,
 	character: Model?,
 	currentPivot: CFrame,
 	desiredPivot: CFrame,

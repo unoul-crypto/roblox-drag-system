@@ -8,16 +8,22 @@ local UserInputService = game:GetService("UserInputService")
 local player = Players.LocalPlayer
 local config = require(ReplicatedStorage.Shared.DragConfig)
 local dragCollision = require(ReplicatedStorage.Shared.DragCollision)
-local dragWeight = require(ReplicatedStorage.Shared.DragWeight)
+local dragAssembly = require(ReplicatedStorage.Shared.DragAssembly)
+local weldConfig = require(ReplicatedStorage.Shared.WeldConfig)
+local objectTargets = require(ReplicatedStorage.Shared.ObjectTargets)
 local remotes = ReplicatedStorage:WaitForChild("DragRemotes")
 local beginDragRemote = remotes:WaitForChild("BeginDrag") :: RemoteFunction
 local updateDragRemote = remotes:WaitForChild("UpdateDrag") :: RemoteEvent
 local endDragRemote = remotes:WaitForChild("EndDrag") :: RemoteEvent
+local dragEndedRemote = remotes:WaitForChild("DragEnded") :: RemoteEvent
 
 type DragTarget = BasePart | Model
 
 type DragState = {
+	id: number,
 	target: DragTarget,
+	assembly: dragAssembly.Snapshot,
+	clientAuthoritative: boolean,
 	localGrabPoint: Vector3,
 	grabDistance: number,
 	rotation: CFrame,
@@ -36,6 +42,13 @@ type DragState = {
 
 local hoveredTarget: DragTarget? = nil
 local dragState: DragState? = nil
+local requestInFlight = false
+local inputVersion = 0
+
+local function isWeldToolEquipped(): boolean
+	local tool = player.Character and player.Character:FindFirstChild(weldConfig.TOOL_NAME)
+	return tool ~= nil and tool:IsA("Tool")
+end
 
 local hoverHighlight = Instance.new("Highlight")
 hoverHighlight.Name = "DragHoverHighlight"
@@ -57,36 +70,11 @@ local function getCharacterRoot(): BasePart?
 end
 
 local function isSupportedTarget(instance: Instance): boolean
-	if instance:IsA("BasePart") then
-		return instance:IsDescendantOf(workspace)
-	end
-
-	if instance:IsA("Model") then
-		return instance:IsDescendantOf(workspace) and instance:FindFirstChildWhichIsA("BasePart", true) ~= nil
-	end
-
-	return false
+	return objectTargets.isSupported(instance)
 end
 
 local function findTaggedTarget(hit: Instance?): DragTarget?
-	local current = hit
-	local taggedPart: BasePart? = nil
-
-	while current and current ~= workspace do
-		if CollectionService:HasTag(current, config.TAG_NAME) and isSupportedTarget(current) then
-			if current:IsA("Model") then
-				return current
-			end
-
-			if current:IsA("BasePart") and not taggedPart then
-				taggedPart = current
-			end
-		end
-
-		current = current.Parent
-	end
-
-	return taggedPart
+	return objectTargets.findTagged(hit, config.TAG_NAME)
 end
 
 local function getMouseRay(): Ray?
@@ -131,32 +119,6 @@ local function isInReach(worldPosition: Vector3): boolean
 	return root ~= nil and (root.Position - worldPosition).Magnitude <= config.MAX_GRAB_DISTANCE
 end
 
-local function getCollisionMode(target: DragTarget): string
-	local mode = target:GetAttribute(config.COLLISION_ATTRIBUTE)
-	if mode == config.COLLISION_MODE_COLLIDE then
-		return config.COLLISION_MODE_COLLIDE
-	end
-	if mode == config.COLLISION_MODE_NO_CLIP then
-		return config.COLLISION_MODE_NO_CLIP
-	end
-	return config.DEFAULT_COLLISION_MODE
-end
-
-local function getRotationMode(target: DragTarget): string
-	local mode = target:GetAttribute(config.ROTATION_ATTRIBUTE)
-	if mode == config.ROTATION_MODE_CAMERA_RELATIVE then
-		return config.ROTATION_MODE_CAMERA_RELATIVE
-	end
-	if mode == config.ROTATION_MODE_WORLD then
-		return config.ROTATION_MODE_WORLD
-	end
-	return config.DEFAULT_ROTATION_MODE
-end
-
-local function getWeight(target: DragTarget): number
-	return dragWeight.normalize(target:GetAttribute(config.WEIGHT_ATTRIBUTE))
-end
-
 local function shouldUsePhysics(weight: number): boolean
 	return weight > 0 and config.WEIGHT_DRAG_MODE == config.WEIGHT_DRAG_MODE_PHYSICS
 end
@@ -172,7 +134,7 @@ local function setHoveredTarget(target: DragTarget?)
 end
 
 local function updateHover()
-	if dragState then
+	if dragState or isWeldToolEquipped() then
 		setHoveredTarget(nil)
 		return
 	end
@@ -203,20 +165,6 @@ local function createGrabMarker(): BasePart
 	return marker
 end
 
-local function getTargetParts(target: DragTarget): {BasePart}
-	if target:IsA("BasePart") then
-		return {target}
-	end
-
-	local parts = {}
-	for _, descendant in target:GetDescendants() do
-		if descendant:IsA("BasePart") then
-			table.insert(parts, descendant)
-		end
-	end
-	return parts
-end
-
 local function stopTargetMotion(parts: {BasePart})
 	for _, part in parts do
 		if not part.Anchored then
@@ -239,12 +187,12 @@ local function finishDrag(notifyServer: boolean)
 	end
 
 	if notifyServer then
-		endDragRemote:FireServer(state.target)
+		endDragRemote:FireServer(state.target, state.id)
 	end
 end
 
 local function startDrag()
-	if dragState then
+	if dragState or requestInFlight or isWeldToolEquipped() then
 		return
 	end
 
@@ -264,9 +212,13 @@ local function startDrag()
 	end
 
 	local grabDistance = (result.Position - camera.CFrame.Position).Magnitude
-	local requestSucceeded, accepted, acceptedTarget = pcall(function()
+	requestInFlight = true
+	local requestVersion = inputVersion
+	local character = player.Character
+	local requestSucceeded, accepted, acceptedTarget, payload = pcall(function()
 		return beginDragRemote:InvokeServer(target, result.Position)
 	end)
+	requestInFlight = false
 	if not requestSucceeded then
 		warn("DragSystem: server did not answer the drag request")
 		return
@@ -277,31 +229,44 @@ local function startDrag()
 	if typeof(acceptedTarget) == "Instance" and isSupportedTarget(acceptedTarget) then
 		target = acceptedTarget :: DragTarget
 	end
-	if not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
-		endDragRemote:FireServer(target)
+	if requestVersion ~= inputVersion or player.Character ~= character or isWeldToolEquipped()
+		or not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
+		endDragRemote:FireServer(target, payload.id)
 		return
 	end
 
-	local pivot = target:GetPivot()
-	local boxCFrame, boxSize = dragCollision.getBoundingBox(target)
-	local weight = getWeight(target)
+	local assembly = payload.assembly
+	if not assembly.root or not assembly.root:IsDescendantOf(workspace) then
+		endDragRemote:FireServer(target, payload.id)
+		return
+	end
+	for _, part in assembly.parts do
+		if not part:IsDescendantOf(workspace) then
+			endDragRemote:FireServer(target, payload.id)
+			return
+		end
+	end
+	local weight = payload.weight
 	local marker = createGrabMarker()
 	marker.Position = result.Position
 	dragState = {
+		id = payload.id,
 		target = target,
-		localGrabPoint = pivot:PointToObjectSpace(result.Position),
+		assembly = assembly,
+		clientAuthoritative = payload.clientAuthoritative,
+		localGrabPoint = payload.localGrabPoint,
 		grabDistance = grabDistance,
-		rotation = pivot.Rotation,
-		cameraRelativeRotation = camera.CFrame.Rotation:ToObjectSpace(pivot.Rotation),
-		collisionMode = getCollisionMode(target),
-		rotationMode = getRotationMode(target),
-		boxOffset = pivot:ToObjectSpace(boxCFrame),
-		boxSize = boxSize,
+		rotation = payload.rotation,
+		cameraRelativeRotation = camera.CFrame.Rotation:ToObjectSpace(payload.rotation),
+		collisionMode = payload.collisionMode,
+		rotationMode = payload.rotationMode,
+		boxOffset = assembly.boxOffset,
+		boxSize = assembly.boxSize,
 		weight = weight,
 		usesPhysics = shouldUsePhysics(weight),
 		dragVelocity = CFrame.new(),
 		marker = marker,
-		parts = getTargetParts(target),
+		parts = assembly.parts,
 		lastUpdate = 0,
 	}
 	setHoveredTarget(nil)
@@ -315,10 +280,14 @@ local function updateDrag(deltaTime: number)
 
 	if not state.target:IsDescendantOf(workspace)
 		or not CollectionService:HasTag(state.target, config.TAG_NAME)
+		or isWeldToolEquipped()
 		or not getCharacterRoot()
 	then
 		finishDrag(true)
 		return
+	end
+	for _, part in state.parts do
+		if not part:IsDescendantOf(workspace) then finishDrag(true); return end
 	end
 
 	local root = getCharacterRoot()
@@ -349,11 +318,11 @@ local function updateDrag(deltaTime: number)
 	end
 
 	local desiredPivot = CFrame.new(targetGrabPosition) * desiredRotation * CFrame.new(-state.localGrabPoint)
-	if state.usesPhysics then
-		local actualPivot = state.target:GetPivot()
+	if state.usesPhysics or not state.clientAuthoritative then
+		local actualPivot = dragAssembly.getPivot(state.assembly)
 		state.marker.Position = actualPivot:PointToWorldSpace(state.localGrabPoint)
 	else
-		local currentPivot = state.target:GetPivot()
+		local currentPivot = dragAssembly.getPivot(state.assembly)
 		local movementPivot = desiredPivot
 		if state.weight > 0 then
 			local smoothTime = math.max(state.weight * config.WEIGHT_SMOOTH_TIME_SCALE, 1 / 240)
@@ -370,7 +339,7 @@ local function updateDrag(deltaTime: number)
 		local resolvedPivot = movementPivot
 		if state.collisionMode == config.COLLISION_MODE_COLLIDE then
 			resolvedPivot = dragCollision.resolvePivot(
-				state.target,
+				state.parts,
 				player.Character,
 				currentPivot,
 				movementPivot,
@@ -382,7 +351,7 @@ local function updateDrag(deltaTime: number)
 			end
 		end
 
-		state.target:PivotTo(resolvedPivot)
+		dragAssembly.move(state.assembly, resolvedPivot)
 		stopTargetMotion(state.parts)
 		state.marker.Position = resolvedPivot:PointToWorldSpace(state.localGrabPoint)
 	end
@@ -390,7 +359,7 @@ local function updateDrag(deltaTime: number)
 	local now = os.clock()
 	if now - state.lastUpdate >= config.UPDATE_RATE then
 		state.lastUpdate = now
-		updateDragRemote:FireServer(state.target, desiredPivot)
+		updateDragRemote:FireServer(state.target, desiredPivot, state.id)
 	end
 end
 
@@ -406,12 +375,18 @@ end)
 
 UserInputService.InputEnded:Connect(function(input: InputObject)
 	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		inputVersion += 1
 		finishDrag(true)
 	end
 end)
 
 player.CharacterRemoving:Connect(function()
+	inputVersion += 1
 	finishDrag(true)
+end)
+
+dragEndedRemote.OnClientEvent:Connect(function(target: Instance, sessionId: number)
+	if dragState and dragState.target == target and dragState.id == sessionId then finishDrag(false) end
 end)
 
 RunService:BindToRenderStep("DragSystem", Enum.RenderPriority.Camera.Value + 1, function(deltaTime: number)
