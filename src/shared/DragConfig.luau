@@ -1,5 +1,6 @@
 return table.freeze({
 	TAG_NAME = "can-drag",
+	REQUIRE_ALL_MEMBERS_DRAGGABLE = true,
 
 	COLLISION_ATTRIBUTE = "DragCollisionMode",
 	COLLISION_MODE_NO_CLIP = "NoClip",

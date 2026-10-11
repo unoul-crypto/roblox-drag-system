@@ -45,9 +45,12 @@ local dragState: DragState? = nil
 local requestInFlight = false
 local inputVersion = 0
 
-local function isWeldToolEquipped(): boolean
-	local tool = player.Character and player.Character:FindFirstChild(weldConfig.TOOL_NAME)
-	return tool ~= nil and tool:IsA("Tool")
+local function isConnectionToolEquipped(): boolean
+	for _, name in {weldConfig.TOOL_NAME, weldConfig.UNWELD_TOOL_NAME} do
+		local tool = player.Character and player.Character:FindFirstChild(name)
+		if tool and tool:IsA("Tool") then return true end
+	end
+	return false
 end
 
 local hoverHighlight = Instance.new("Highlight")
@@ -94,6 +97,8 @@ local function raycastFromMouse(excludedTarget: DragTarget?): RaycastResult?
 	end
 
 	local excludedInstances = {}
+	local weldMarkers = workspace:FindFirstChild("WeldConnections")
+	if weldMarkers then table.insert(excludedInstances, weldMarkers) end
 	if player.Character then
 		table.insert(excludedInstances, player.Character)
 	end
@@ -134,7 +139,7 @@ local function setHoveredTarget(target: DragTarget?)
 end
 
 local function updateHover()
-	if dragState or isWeldToolEquipped() then
+	if dragState or isConnectionToolEquipped() then
 		setHoveredTarget(nil)
 		return
 	end
@@ -192,7 +197,7 @@ local function finishDrag(notifyServer: boolean)
 end
 
 local function startDrag()
-	if dragState or requestInFlight or isWeldToolEquipped() then
+	if dragState or requestInFlight or isConnectionToolEquipped() then
 		return
 	end
 
@@ -229,7 +234,7 @@ local function startDrag()
 	if typeof(acceptedTarget) == "Instance" and isSupportedTarget(acceptedTarget) then
 		target = acceptedTarget :: DragTarget
 	end
-	if requestVersion ~= inputVersion or player.Character ~= character or isWeldToolEquipped()
+	if requestVersion ~= inputVersion or player.Character ~= character or isConnectionToolEquipped()
 		or not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
 		endDragRemote:FireServer(target, payload.id)
 		return
@@ -280,7 +285,7 @@ local function updateDrag(deltaTime: number)
 
 	if not state.target:IsDescendantOf(workspace)
 		or not CollectionService:HasTag(state.target, config.TAG_NAME)
-		or isWeldToolEquipped()
+		or isConnectionToolEquipped()
 		or not getCharacterRoot()
 	then
 		finishDrag(true)

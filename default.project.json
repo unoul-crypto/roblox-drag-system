@@ -26,6 +26,9 @@
     "StarterPack": {
       "WeldTool": {
         "$path": "src/tools/WeldTool"
+      },
+      "UnweldTool": {
+        "$path": "src/tools/UnweldTool"
       }
     },
 

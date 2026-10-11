@@ -166,6 +166,14 @@ local function isValidTarget(target: any): boolean
 	return target:IsA("Model") and target:FindFirstChildWhichIsA("BasePart", true) ~= nil
 end
 
+local function isGroupDraggable(members: {DragTarget}): boolean
+	if not config.REQUIRE_ALL_MEMBERS_DRAGGABLE then return true end
+	for _, member in members do
+		if not isValidTarget(member) then return false end
+	end
+	return true
+end
+
 local function getPreferredTarget(target: DragTarget): DragTarget
 	return objectTargets.findTagged(target, config.TAG_NAME) or target
 end
@@ -445,6 +453,7 @@ local function beginDrag(player: Player, target: any, hitPosition: any, request:
 		return false
 	end
 	local members = weldServer.GetAssemblyTargets(typedTarget)
+	if not isGroupDraggable(members) then return false end
 	local parts = objectTargets.getParts(members)
 	local release = interactionLocks:TryAcquire(objectTargets.getLockKeys(members, parts))
 	if not release then return false end
@@ -454,6 +463,7 @@ local function beginDrag(player: Player, target: any, hitPosition: any, request:
 	end
 	root = getCharacterRoot(player)
 	if request.cancelled or player.Parent ~= Players or not root or not isValidTarget(typedTarget)
+		or not isGroupDraggable(members)
 		or (root.Position - hitPosition).Magnitude > config.MAX_GRAB_DISTANCE
 		or not weldServer.IsSameAssembly(typedTarget, members) then return false end
 	for _, part in parts do if not part:IsDescendantOf(workspace) then return false end end
@@ -543,6 +553,7 @@ updateDragRemote.OnServerEvent:Connect(function(player: Player, target: any, des
 	end
 
 	if not isValidTarget(session.target)
+		or not isGroupDraggable(session.members)
 		or typeof(desiredPivot) ~= "CFrame"
 		or not isFiniteCFrame(desiredPivot)
 	then
@@ -673,6 +684,7 @@ RunService.Heartbeat:Connect(function(deltaTime: number)
 	local sessionsToEnd = {}
 	for player, session in sessionsByPlayer do
 		local valid = getCharacterRoot(player) ~= nil and isValidTarget(session.target)
+			and isGroupDraggable(session.members)
 			and weldServer.IsSameAssembly(session.target, session.members)
 		for _, part in session.assembly.parts do
 			if not part:IsDescendantOf(workspace) then valid = false; break end
@@ -706,7 +718,7 @@ end)
 
 CollectionService:GetInstanceRemovedSignal(config.TAG_NAME):Connect(function(instance: Instance)
 	local owner = ownerByTarget[instance]
-	if owner then
+	if owner and (config.REQUIRE_ALL_MEMBERS_DRAGGABLE or sessionsByPlayer[owner].target == instance) then
 		endSession(owner)
 	end
 end)

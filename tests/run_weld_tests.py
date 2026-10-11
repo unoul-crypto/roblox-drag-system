@@ -27,6 +27,9 @@ def main() -> None:
         sections += [f'modules["{name}"] = (function()', source(f"src/shared/{name}.luau"), "end)()",
                      f'mock.services.ReplicatedStorage.Shared["{name}"] = "{name}"',
                      f'script.Parent["{name}"] = "{name}"']
+    # Clone config to test both policies in the same runtime.
+    sections += ['modules.DragConfig = table.clone(modules.DragConfig)',
+                 'modules.WeldConfig = table.clone(modules.WeldConfig)']
     sections += ['modules.InteractionLocks = modules.TargetLocks.new()',
                  'script.Parent.InteractionLocks = "InteractionLocks"']
     for name in ["DragServer", "WeldServer"]:
@@ -36,7 +39,9 @@ def main() -> None:
                  source("src/server/init.server.luau"), "end",
                  "local function startWeldRuntime()", source("src/server/WeldRuntime.server.luau"), "end",
                  "local runTests = (function()", source("tests/Welding.spec.luau"), "end)()",
-                 "runTests(mock, modules, startDragRuntime, startWeldRuntime)"]
+                 "runTests(mock, modules, startDragRuntime, startWeldRuntime)",
+                 "local runExtensions = (function()", source("tests/WeldExtensions.spec.luau"), "end)()",
+                 "runExtensions(mock, modules)"]
     with tempfile.TemporaryDirectory(prefix="weld-tests-") as directory:
         script_path = Path(directory) / "run.luau"
         script_path.write_text("\n".join(sections), encoding="utf-8")

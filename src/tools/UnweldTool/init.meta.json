@@ -1,0 +1,8 @@
+{
+  "className": "Tool",
+  "properties": {
+    "RequiresHandle": false,
+    "CanBeDropped": false,
+    "ToolTip": "Удалить соединение по шарику сварки"
+  }
+}
