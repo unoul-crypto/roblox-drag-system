@@ -123,6 +123,9 @@ return function(mock, modules)
 	remotes.UpdateDrag.OnServerEvent:Fire(actor, part, desired, payload.id, false)
 	check(frameNear(rig.DragSystemAlignOrientation.CFrame, yaw), "Server retains manual World rotation after the modifier is released")
 	remotes.UpdateDrag.OnServerEvent:Fire(actor, part, mock.CFrame.new(100, 0, 0), payload.id, true)
-	check(part.Anchored and not part.DragSystemPhysicsRig, "Manual edits still enforce server reach and clean up invalid dragging")
+	check(not part.Anchored and rig.DragSystemAlignPosition.Position.Magnitude <= modules.DragConfig.MAX_GRAB_DISTANCE + 1e-6,
+		"Out-of-range manual goals are bounded without cancelling the session")
+	remotes.UpdateDrag.OnServerEvent:Fire(actor, part, mock.CFrame.new(0/0, 0, 0), payload.id, true)
+	check(part.Anchored and not part.DragSystemPhysicsRig, "Non-finite goals still stop invalid dragging and restore properties")
 	print("Drag controls: " .. checks .. " checks passed (mocked camera/input/engine)")
 end

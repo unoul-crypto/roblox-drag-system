@@ -27,4 +27,12 @@ function DragManipulation.desiredPivot(grabPoint: Vector3, rotation: CFrame, loc
 	return CFrame.new(grabPoint) * rotation * CFrame.new(-localGrabPoint)
 end
 
+function DragManipulation.clampGrabPoint(grabPoint: Vector3, playerPosition: Vector3, maxDistance: number): Vector3
+	local offset = grabPoint - playerPosition
+	local distance = offset.Magnitude
+	local limit = math.max(maxDistance, 0)
+	if distance <= limit then return grabPoint end
+	return playerPosition + offset * (limit / distance)
+end
+
 return table.freeze(DragManipulation)

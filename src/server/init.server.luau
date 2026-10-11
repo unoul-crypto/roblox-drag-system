@@ -8,6 +8,7 @@ local config = require(ReplicatedStorage.Shared.DragConfig)
 local dragCollision = require(ReplicatedStorage.Shared.DragCollision)
 local dragWeight = require(ReplicatedStorage.Shared.DragWeight)
 local dragAssembly = require(ReplicatedStorage.Shared.DragAssembly)
+local dragManipulation = require(ReplicatedStorage.Shared.DragManipulation)
 local objectTargets = require(ReplicatedStorage.Shared.ObjectTargets)
 local dragServer = require(script.DragServer)
 local weldServer = require(script.WeldServer)
@@ -567,12 +568,17 @@ updateDragRemote.OnServerEvent:Connect(function(player: Player, target: any, des
 		desiredRotation = desiredPivot.Rotation
 	end
 	if rotationEdited == true then session.rotation = desiredRotation end
-	local sanitizedPivot = CFrame.new(desiredPivot.Position) * desiredRotation
-	local grabPosition = sanitizedPivot:PointToWorldSpace(session.localGrabPoint)
-	if not root or (root.Position - grabPosition).Magnitude > config.MAX_GRAB_DISTANCE then
+	if not root then
 		endSession(player)
 		return
 	end
+	-- Client and server may see different player positions while walking.
+	-- Bound the requested grab point instead of cancelling an otherwise valid session.
+	local requestedPivot = CFrame.new(desiredPivot.Position) * desiredRotation
+	local grabPosition = dragManipulation.clampGrabPoint(
+		requestedPivot:PointToWorldSpace(session.localGrabPoint), root.Position, config.MAX_GRAB_DISTANCE
+	)
+	local sanitizedPivot = dragManipulation.desiredPivot(grabPosition, desiredRotation, session.localGrabPoint)
 
 	local physicsRig = session.physicsRig
 	if physicsRig then

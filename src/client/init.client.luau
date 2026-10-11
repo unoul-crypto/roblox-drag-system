@@ -317,11 +317,9 @@ local function updateDrag(deltaTime: number)
 		return
 	end
 
-	local targetGrabPosition = ray.Origin + ray.Direction.Unit * state.grabDistance
-	local offsetFromPlayer = targetGrabPosition - root.Position
-	if offsetFromPlayer.Magnitude > config.MAX_GRAB_DISTANCE then
-		targetGrabPosition = root.Position + offsetFromPlayer.Unit * (config.MAX_GRAB_DISTANCE - 0.1)
-	end
+	local targetGrabPosition = dragManipulation.clampGrabPoint(
+		ray.Origin + ray.Direction.Unit * state.grabDistance, root.Position, config.MAX_GRAB_DISTANCE - 0.1
+	)
 
 	local camera = workspace.CurrentCamera
 	if not camera then

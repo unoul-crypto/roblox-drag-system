@@ -44,7 +44,9 @@ def main() -> None:
                  "local runExtensions = (function()", source("tests/WeldExtensions.spec.luau"), "end)()",
                  "runExtensions(mock, modules)",
                  "local runControls = (function()", source("tests/DragControls.spec.luau"), "end)()",
-                 "runControls(mock, modules)"]
+                 "runControls(mock, modules)",
+                 "local runReach = (function()", source("tests/DragReach.spec.luau"), "end)()",
+                 "runReach(mock, modules)"]
     with tempfile.TemporaryDirectory(prefix="weld-tests-") as directory:
         script_path = Path(directory) / "run.luau"
         script_path.write_text("\n".join(sections), encoding="utf-8")
