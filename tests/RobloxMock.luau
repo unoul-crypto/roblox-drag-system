@@ -30,6 +30,7 @@ Vector.__mul = function(a, b) return vector(a.X * b, a.Y * b, a.Z * b) end
 Vector.__unm = function(a) return a * -1 end
 function Vector:Min(b) return vector(math.min(self.X, b.X), math.min(self.Y, b.Y), math.min(self.Z, b.Z)) end
 function Vector:Max(b) return vector(math.max(self.X, b.X), math.max(self.Y, b.Y), math.max(self.Z, b.Z)) end
+function Vector:Dot(b) return self.X * b.X + self.Y * b.Y + self.Z * b.Z end
 Mock.Vector3 = {new = vector, one = vector(1, 1, 1), zero = vector(0, 0, 0), yAxis = vector(0, 1, 0)}
 
 local Frame = {}
@@ -216,7 +217,7 @@ function players:GetPlayerByUserId(id)
 end
 function players:GetPlayers() return self:GetChildren() end
 Mock.services = {CollectionService = collection, Players = players,
-	ReplicatedStorage = Mock.Instance.new("ReplicatedStorage"), RunService = {Heartbeat = signal()}, TweenService = {}}
+	ReplicatedStorage = Mock.Instance.new("ReplicatedStorage"), RunService = {Heartbeat = signal(), PreSimulation = signal()}, TweenService = {}}
 local actions = {bindings = {}}
 function actions:BindActionAtPriority(name, callback, _, priority, ...)
 	self.bindings[name] = {callback = callback, priority = priority, inputs = {...}}

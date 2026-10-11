@@ -9,6 +9,7 @@ local dragCollision = require(ReplicatedStorage.Shared.DragCollision)
 local dragWeight = require(ReplicatedStorage.Shared.DragWeight)
 local dragAssembly = require(ReplicatedStorage.Shared.DragAssembly)
 local dragManipulation = require(ReplicatedStorage.Shared.DragManipulation)
+local physicsTargetMotion = require(ReplicatedStorage.Shared.PhysicsTargetMotion)
 local objectTargets = require(ReplicatedStorage.Shared.ObjectTargets)
 local dragServer = require(script.DragServer)
 local weldServer = require(script.WeldServer)
@@ -42,6 +43,9 @@ type PhysicsDragRig = {
 	alignPosition: AlignPosition,
 	alignOrientation: AlignOrientation,
 	collisionStates: {CollisionState},
+	requestedGrabPosition: Vector3,
+	targetMotion: physicsTargetMotion.State,
+	targetSettings: physicsTargetMotion.Settings,
 }
 
 type DragSession = {
@@ -394,6 +398,9 @@ local function createPhysicsDragRig(
 		alignPosition = alignPosition,
 		alignOrientation = alignOrientation,
 		collisionStates = collisionStates,
+		requestedGrabPosition = hitPosition,
+		targetMotion = physicsTargetMotion.new(hitPosition),
+		targetSettings = physicsTargetMotion.getSettings(physicsSettings.maxVelocity, config),
 	}
 end
 
@@ -590,7 +597,11 @@ updateDragRemote.OnServerEvent:Connect(function(player: Player, target: any, des
 		end
 
 		local desiredRoot = sanitizedPivot * physicsRig.rootOffsetFromPivot
-		physicsRig.alignPosition.Position = grabPosition
+		physicsRig.requestedGrabPosition = grabPosition
+		if not config.PHYSICS_TARGET_SMOOTHING_ENABLED then
+			physicsRig.alignPosition.Position = grabPosition
+			physicsTargetMotion.reset(physicsRig.targetMotion, grabPosition)
+		end
 		physicsRig.alignOrientation.CFrame = desiredRoot.Rotation
 		session.lastPivot = dragAssembly.getPivot(session.assembly)
 		return
@@ -679,6 +690,38 @@ for _, player in Players:GetPlayers() do
 	watchPlayer(player)
 end
 Players.PlayerAdded:Connect(watchPlayer)
+
+RunService.PreSimulation:Connect(function(deltaTime: number)
+	if not config.PHYSICS_TARGET_SMOOTHING_ENABLED then return end
+	local sessionsToEnd = {}
+	for player, session in sessionsByPlayer do
+		local rig = session.physicsRig
+		if not rig then continue end
+		local root = getCharacterRoot(player)
+		local actualPivot = dragAssembly.getPivot(session.assembly)
+		if not root or not isFiniteVector(root.Position) or not isFiniteCFrame(actualPivot)
+			or not rig.container:IsDescendantOf(session.target)
+			or not rig.attachment:IsDescendantOf(rig.root)
+			or not rig.alignPosition:IsDescendantOf(rig.container)
+			or not rig.alignOrientation:IsDescendantOf(rig.container) then
+			table.insert(sessionsToEnd, player)
+			continue
+		end
+		local goal = dragManipulation.clampGrabPoint(rig.requestedGrabPosition, root.Position, config.MAX_GRAB_DISTANCE)
+		local position = physicsTargetMotion.step(rig.targetMotion, goal, deltaTime, rig.targetSettings)
+		if config.PHYSICS_TARGET_MAX_LEAD > 0 then
+			position = dragManipulation.clampGrabPoint(position,
+				actualPivot:PointToWorldSpace(session.localGrabPoint), config.PHYSICS_TARGET_MAX_LEAD)
+		end
+		position = dragManipulation.clampGrabPoint(position, root.Position, config.MAX_GRAB_DISTANCE)
+		if (position - rig.targetMotion.position).Magnitude > 1e-5 then
+			-- Don't store outward velocity while a reach/lead boundary holds the target.
+			physicsTargetMotion.reset(rig.targetMotion, position)
+		end
+		rig.alignPosition.Position = position
+	end
+	for _, player in sessionsToEnd do endSession(player) end
+end)
 
 local ownershipCheckAccumulator = 0
 RunService.Heartbeat:Connect(function(deltaTime: number)

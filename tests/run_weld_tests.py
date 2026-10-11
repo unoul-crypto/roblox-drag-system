@@ -24,7 +24,7 @@ def main() -> None:
                 "mock.services.ReplicatedStorage.Shared = {}"]
     for name in ["ConnectionGraph", "TargetLocks", "ValidationRegistry", "WeldConfig",
                  "DragConfig", "DragWeight", "DragCollision", "ObjectTargets", "DragAssembly", "WeldGeometry",
-                 "DragManipulation", "DragInputController"]:
+                 "DragManipulation", "DragInputController", "PhysicsTargetMotion"]:
         sections += [f'modules["{name}"] = (function()', source(f"src/shared/{name}.luau"), "end)()",
                      f'mock.services.ReplicatedStorage.Shared["{name}"] = "{name}"',
                      f'script.Parent["{name}"] = "{name}"']
@@ -46,7 +46,9 @@ def main() -> None:
                  "local runControls = (function()", source("tests/DragControls.spec.luau"), "end)()",
                  "runControls(mock, modules)",
                  "local runReach = (function()", source("tests/DragReach.spec.luau"), "end)()",
-                 "runReach(mock, modules)"]
+                 "runReach(mock, modules)",
+                 "local runTargetMotion = (function()", source("tests/PhysicsTargetMotion.spec.luau"), "end)()",
+                 "runTargetMotion(mock, modules)"]
     with tempfile.TemporaryDirectory(prefix="weld-tests-") as directory:
         script_path = Path(directory) / "run.luau"
         script_path.write_text("\n".join(sections), encoding="utf-8")
