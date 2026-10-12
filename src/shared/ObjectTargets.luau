@@ -49,6 +49,11 @@ function ObjectTargets.isFiniteVector(point: Vector3): boolean
 		and point.Z == point.Z and math.abs(point.Z) < math.huge
 end
 
+function ObjectTargets.isFiniteCFrame(frame: CFrame): boolean
+	return ObjectTargets.isFiniteVector(frame.Position) and ObjectTargets.isFiniteVector(frame.XVector)
+		and ObjectTargets.isFiniteVector(frame.YVector) and ObjectTargets.isFiniteVector(frame.ZVector)
+end
+
 function ObjectTargets.containsPoint(target: Target, point: Vector3): boolean
 	for _, part in ObjectTargets.getParts({target}) do
 		local localPoint = part.CFrame:PointToObjectSpace(point)

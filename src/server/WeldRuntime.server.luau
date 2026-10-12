@@ -2,6 +2,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local config = require(ReplicatedStorage.Shared.WeldConfig)
 local ObjectTargets = require(ReplicatedStorage.Shared.ObjectTargets)
+local InteractionCharacter = require(ReplicatedStorage.Shared.InteractionCharacter)
 local WeldServer = require(script.Parent.WeldServer)
 
 local requests: {[Player]: number} = {}
@@ -28,8 +29,8 @@ local function registerRemote(name: string, toolName: string, unweld: boolean)
 			or not ObjectTargets.isFiniteVector(point) then return false, "InvalidTarget" end
 		local target = if unweld then hit else ObjectTargets.findTagged(hit, config.TAG_NAME)
 		if unweld and not WeldServer.GetWeldTargets(hit) then return false, "InvalidMarker" end
-		local root = character and character:FindFirstChild("HumanoidRootPart")
-		if not target or not root or not root:IsA("BasePart")
+		local root = InteractionCharacter.getRoot(player)
+		if not target or not root
 			or not ObjectTargets.containsPoint(target, point)
 			or (root.Position - point).Magnitude > config.MAX_USE_DISTANCE then return false, "OutOfReach" end
 		pending[player] = true

@@ -2,12 +2,10 @@ local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
 local config = require(ReplicatedStorage.Shared.DragConfig)
-local dragCollision = require(ReplicatedStorage.Shared.DragCollision)
 local dragAssembly = require(ReplicatedStorage.Shared.DragAssembly)
 local dragManipulation = require(ReplicatedStorage.Shared.DragManipulation)
 local DragInputController = require(ReplicatedStorage.Shared.DragInputController)
@@ -25,19 +23,12 @@ type DragState = {
 	id: number,
 	target: DragTarget,
 	assembly: dragAssembly.Snapshot,
-	clientAuthoritative: boolean,
 	localGrabPoint: Vector3,
 	grabDistance: number,
 	rotation: CFrame,
 	cameraRelativeRotation: CFrame,
 	rotationEdited: boolean,
-	collisionMode: string,
 	rotationMode: string,
-	boxOffset: CFrame,
-	boxSize: Vector3,
-	weight: number,
-	usesPhysics: boolean,
-	dragVelocity: CFrame,
 	marker: BasePart,
 	parts: {BasePart},
 	lastUpdate: number,
@@ -132,10 +123,6 @@ local function isInReach(worldPosition: Vector3): boolean
 	return root ~= nil and (root.Position - worldPosition).Magnitude <= config.MAX_GRAB_DISTANCE
 end
 
-local function shouldUsePhysics(weight: number): boolean
-	return weight > 0 and config.WEIGHT_DRAG_MODE == config.WEIGHT_DRAG_MODE_PHYSICS
-end
-
 local function setHoveredTarget(target: DragTarget?)
 	if hoveredTarget == target then
 		return
@@ -178,15 +165,6 @@ local function createGrabMarker(): BasePart
 	return marker
 end
 
-local function stopTargetMotion(parts: {BasePart})
-	for _, part in parts do
-		if not part.Anchored then
-			part.AssemblyLinearVelocity = Vector3.zero
-			part.AssemblyAngularVelocity = Vector3.zero
-		end
-	end
-end
-
 local function finishDrag(notifyServer: boolean)
 	local state = dragState
 	if not state then
@@ -196,9 +174,6 @@ local function finishDrag(notifyServer: boolean)
 	dragState = nil
 	inputController:SetDragging(false)
 	state.marker:Destroy()
-	if not state.usesPhysics then
-		stopTargetMotion(state.parts)
-	end
 
 	if notifyServer then
 		endDragRemote:FireServer(state.target, state.id)
@@ -260,26 +235,18 @@ local function startDrag()
 			return
 		end
 	end
-	local weight = payload.weight
 	local marker = createGrabMarker()
 	marker.Position = result.Position
 	dragState = {
 		id = payload.id,
 		target = target,
 		assembly = assembly,
-		clientAuthoritative = payload.clientAuthoritative,
 		localGrabPoint = payload.localGrabPoint,
 		grabDistance = grabDistance,
 		rotation = payload.rotation,
 		cameraRelativeRotation = camera.CFrame.Rotation:ToObjectSpace(payload.rotation),
 		rotationEdited = false,
-		collisionMode = payload.collisionMode,
 		rotationMode = payload.rotationMode,
-		boxOffset = assembly.boxOffset,
-		boxSize = assembly.boxSize,
-		weight = weight,
-		usesPhysics = shouldUsePhysics(weight),
-		dragVelocity = CFrame.new(),
 		marker = marker,
 		parts = assembly.parts,
 		lastUpdate = 0,
@@ -338,43 +305,8 @@ local function updateDrag(deltaTime: number)
 	end
 
 	local desiredPivot = dragManipulation.desiredPivot(targetGrabPosition, desiredRotation, state.localGrabPoint)
-	if state.usesPhysics or not state.clientAuthoritative then
-		local actualPivot = dragAssembly.getPivot(state.assembly)
-		state.marker.Position = actualPivot:PointToWorldSpace(state.localGrabPoint)
-	else
-		local currentPivot = dragAssembly.getPivot(state.assembly)
-		local movementPivot = desiredPivot
-		if state.weight > 0 then
-			local smoothTime = math.max(state.weight * config.WEIGHT_SMOOTH_TIME_SCALE, 1 / 240)
-			movementPivot, state.dragVelocity = TweenService:SmoothDamp(
-				currentPivot,
-				desiredPivot,
-				state.dragVelocity,
-				smoothTime,
-				math.huge,
-				deltaTime
-			)
-		end
-
-		local resolvedPivot = movementPivot
-		if state.collisionMode == config.COLLISION_MODE_COLLIDE then
-			resolvedPivot = dragCollision.resolvePivot(
-				state.parts,
-				player.Character,
-				currentPivot,
-				movementPivot,
-				state.boxOffset,
-				state.boxSize
-			)
-			if resolvedPivot ~= movementPivot then
-				state.dragVelocity = CFrame.new()
-			end
-		end
-
-		dragAssembly.move(state.assembly, resolvedPivot)
-		stopTargetMotion(state.parts)
-		state.marker.Position = resolvedPivot:PointToWorldSpace(state.localGrabPoint)
-	end
+	local actualPivot = dragAssembly.getPivot(state.assembly)
+	state.marker.Position = actualPivot:PointToWorldSpace(state.localGrabPoint)
 
 	local now = os.clock()
 	if now - state.lastUpdate >= config.UPDATE_RATE then

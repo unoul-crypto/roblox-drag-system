@@ -84,6 +84,10 @@ end
 function Frame:PointToObjectSpace(point) return self:Inverse():PointToWorldSpace(point) end
 function Frame:PointToWorldSpace(point) return self.Position + transform(self.matrix, point) end
 function Frame:ToObjectSpace(other) return self:Inverse() * other end
+function Frame:Lerp(other, alpha)
+	-- The adapter only approximates native rotation interpolation; tests use identity rotation here.
+	return frame(self.Position + (other.Position - self.Position) * alpha, other.matrix)
+end
 
 local methods = {}
 local instances = {}
@@ -97,14 +101,35 @@ meta.__index = function(object, key)
 end
 meta.__newindex = function(object, key, value)
 	local previous = object._properties[key]
+	if key == "Parent" and previous ~= value and previous then
+		local removed = {object}
+		for _, child in object:GetDescendants() do table.insert(removed, child) end
+		local ancestor = previous
+		while ancestor do
+			for _, item in removed do ancestor.DescendantRemoving:Fire(item) end
+			ancestor = ancestor.Parent
+		end
+	end
 	if key == "Parent" and previous then
 		local index = table.find(previous._children, object)
 		if index then table.remove(previous._children, index) end
 	end
 	object._properties[key] = value
+	if key == "Anchored" and previous ~= value then
+		object._properties.networkOwner, object._properties.networkAuto = nil, true
+	end
 	if key == "Parent" then
 		if value then table.insert(value._children, object) end
 		object.AncestryChanged:Fire(object, value)
+		if value and previous ~= value then
+			local added = {object}
+			for _, child in object:GetDescendants() do table.insert(added, child) end
+			local ancestor = value
+			while ancestor do
+				for _, item in added do ancestor.DescendantAdded:Fire(item) end
+				ancestor = ancestor.Parent
+			end
+		end
 	end
 	if object._signals[key] then object._signals[key]:Fire() end
 end
@@ -119,6 +144,7 @@ Mock.Instance = {new = function(class)
 			Anchored = false, CanCollide = true, AssemblyMass = 1,
 			Size = vector(2, 2, 2), CFrame = Mock.CFrame.new(),
 			Destroying = signal(), AncestryChanged = signal(), OnServerEvent = signal(),
+			DescendantAdded = signal(), DescendantRemoving = signal(), networkAuto = true,
 			CharacterRemoving = signal()},
 	}, meta)
 	table.insert(instances, object)
@@ -183,19 +209,28 @@ function methods:GetClosestPointOnSurface(point)
 	return self.Position + vector(math.clamp(relative.X, -half.X, half.X),
 		math.clamp(relative.Y, -half.Y, half.Y), math.clamp(relative.Z, -half.Z, half.Z))
 end
-function methods:CanSetNetworkOwnership() return true end
-function methods:SetNetworkOwner(player) self._properties.networkOwner = player end
+function methods:CanSetNetworkOwnership() return self._properties.canSetOwnership ~= false end
+function methods:SetNetworkOwner(player)
+	if self._properties.failOwnership then error("Injected ownership failure") end
+	self._properties.networkOwner, self._properties.networkAuto = player, false
+end
 function methods:GetNetworkOwner() return self._properties.networkOwner end
-function methods:SetNetworkOwnershipAuto() self._properties.networkOwner = nil end
+function methods:GetNetworkOwnershipAuto() return self._properties.networkAuto end
+function methods:SetNetworkOwnershipAuto() self._properties.networkOwner, self._properties.networkAuto = nil, true end
 function methods:FireClient(player, ...) self._properties.lastClientEvent = {player, ...} end
 function methods:Move(direction) self._properties.moveDirection = direction end
 
 Mock.workspace = Mock.Instance.new("Workspace")
 Mock.workspace.Gravity = 196.2
-local tags, removedSignals = {}, {}
+local tags, removedSignals, addedSignals = {}, {}, {}
 local collection = {}
 function collection:HasTag(object, tag) return tags[tag] ~= nil and tags[tag][object] == true end
-function collection:AddTag(object, tag) tags[tag] = tags[tag] or {}; tags[tag][object] = true end
+function collection:AddTag(object, tag)
+	tags[tag] = tags[tag] or {}
+	if tags[tag][object] then return end
+	tags[tag][object] = true
+	if addedSignals[tag] then addedSignals[tag]:Fire(object) end
+end
 function collection:GetTagged(tag)
 	local result = {}
 	for object in tags[tag] or {} do table.insert(result, object) end
@@ -209,6 +244,10 @@ function collection:GetInstanceRemovedSignal(tag)
 	removedSignals[tag] = removedSignals[tag] or signal()
 	return removedSignals[tag]
 end
+function collection:GetInstanceAddedSignal(tag)
+	addedSignals[tag] = addedSignals[tag] or signal()
+	return addedSignals[tag]
+end
 local players = Mock.Instance.new("Players")
 players.PlayerAdded, players.PlayerRemoving = signal(), signal()
 function players:GetPlayerByUserId(id)
@@ -218,6 +257,13 @@ end
 function players:GetPlayers() return self:GetChildren() end
 Mock.services = {CollectionService = collection, Players = players,
 	ReplicatedStorage = Mock.Instance.new("ReplicatedStorage"), RunService = {Heartbeat = signal(), PreSimulation = signal()}, TweenService = {}}
+Mock.params = {new = function() return {} end}
+function Mock.workspace:Blockcast() return nil end
+function Mock.workspace:GetPartBoundsInBox() return {} end
+function Mock.services.TweenService:SmoothDamp(current, target, velocity, smoothTime, maxSpeed, dt)
+	self.lastCall = {smoothTime = smoothTime, deltaTime = dt, maxSpeed = maxSpeed}
+	return current:Lerp(target, 1 - math.exp(-dt / smoothTime)), velocity
+end
 local actions = {bindings = {}}
 function actions:BindActionAtPriority(name, callback, _, priority, ...)
 	self.bindings[name] = {callback = callback, priority = priority, inputs = {...}}

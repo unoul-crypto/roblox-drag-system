@@ -88,7 +88,12 @@ return function(mock, modules, startDragRuntime, startWeldRuntime)
 	check(weld.TryWeld(d, e, player.UserId), "Unregistering a condition must restore access")
 	check(weld.RemoveWeld(d, e) and not weld.HasWeld(d, e), "API removal updates graph and constraints")
 
+	local idleBeforeStart = tagged("IdleBeforeStart", -20)
+	idleBeforeStart.Anchored = false
+	idleBeforeStart:SetNetworkOwner(player2)
 	startDragRuntime()
+	check(idleBeforeStart:GetNetworkOwner() == nil and not idleBeforeStart:GetNetworkOwnershipAuto(),
+		"Startup removes preexisting client ownership from unanchored interactive objects")
 	local remotes = mock.services.ReplicatedStorage.DragRemotes
 	local accepted, target, payload = remotes.BeginDrag.OnServerInvoke(player, a, a.Position)
 	check(accepted and target == a and #payload.assembly.parts == 3, "Dragging captures the full welded chain")

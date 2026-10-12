@@ -52,20 +52,22 @@ return function(mock, modules)
 	part.Anchored = true
 	collection:AddTag(part, "can-drag")
 	accepted, _, payload = remotes.BeginDrag.OnServerInvoke(kinematicActor, part, part.Position)
-	check(accepted and payload.clientAuthoritative, "Zero-weight regression uses client-owned dragging")
+	check(accepted and not payload.clientAuthoritative and part:GetNetworkOwner() == nil,
+		"Zero-weight regression uses server-owned dragging")
 	for step = 1, 5 do
 		kinematicRoot.CFrame = mock.CFrame.new(step, 0, 0)
-		-- Local movement has followed the newer client position, within the existing network tolerance.
-		part.CFrame = mock.CFrame.new(step + config.MAX_GRAB_DISTANCE + 0.7, 0, 0)
-		remotes.UpdateDrag.OnServerEvent:Fire(kinematicActor, part, part.CFrame, payload.id, false)
+		local requested = mock.CFrame.new(step + config.MAX_GRAB_DISTANCE + 0.7, 0, 0)
+		remotes.UpdateDrag.OnServerEvent:Fire(kinematicActor, part, requested, payload.id, false)
+		mock.services.RunService.PreSimulation:Fire(1/60)
 		mock.services.RunService.Heartbeat:Fire(0.25)
-		check(not part.Anchored and modules.InteractionLocks:IsLocked(part),
-			"Client-owned dragging survives forward movement and periodic ownership checks")
+		check(not part.Anchored and modules.InteractionLocks:IsLocked(part)
+			and (part.Position - kinematicRoot.Position).Magnitude <= config.MAX_GRAB_DISTANCE + 1e-6,
+			"Server-owned instantaneous movement stays bounded while walking forward")
 	end
-	part.CFrame = mock.CFrame.new(kinematicRoot.Position.X + config.MAX_GRAB_DISTANCE
-		+ config.CLIENT_OWNERSHIP_POSITION_TOLERANCE + 10, 0, 0)
+	kinematicRoot.CFrame = mock.CFrame.new(math.huge, 0, 0)
 	mock.services.RunService.Heartbeat:Fire(0.25)
-	check(part.Anchored and not modules.InteractionLocks:IsLocked(part), "Actual client-owned movement still has a distance guard")
+	check(part.Anchored and not modules.InteractionLocks:IsLocked(part), "Invalid character position cancels server-owned movement")
+	kinematicRoot.CFrame = mock.CFrame.new()
 
 	-- The clamp applies only to movement goals; initial grabs still require an in-range object.
 	check(not remotes.BeginDrag.OnServerInvoke(kinematicActor, part,

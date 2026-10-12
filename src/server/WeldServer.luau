@@ -4,6 +4,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local shared = ReplicatedStorage.Shared
 local config = require(shared.WeldConfig)
 local ObjectTargets = require(shared.ObjectTargets)
+local InteractionCharacter = require(shared.InteractionCharacter)
 local WeldGeometry = require(shared.WeldGeometry)
 local ConnectionGraph = require(shared.ConnectionGraph)
 local ValidationRegistry = require(shared.ValidationRegistry)
@@ -161,9 +162,8 @@ local function getContact(a: Target, b: Target): WeldGeometry.Contact?
 end
 
 local function inReach(player: Player, contact: WeldGeometry.Contact): boolean
-	local character = player.Character
-	local root = character and character:FindFirstChild("HumanoidRootPart")
-	return root ~= nil and root:IsA("BasePart")
+	local root = InteractionCharacter.getRoot(player)
+	return root ~= nil
 		and (root.Position - contact.point0).Magnitude <= config.MAX_USE_DISTANCE
 		and (root.Position - contact.point1).Magnitude <= config.MAX_USE_DISTANCE
 end
@@ -275,8 +275,8 @@ function WeldServer.Unweld(a: Target, b: Target, playerUserId: number?, contextC
 	if not release then return false, "Busy" end
 	local function canReach(): boolean
 		if not player then return true end
-		local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-		return player.Parent == Players and root ~= nil and root:IsA("BasePart")
+		local root = InteractionCharacter.getRoot(player)
+		return player.Parent == Players and root ~= nil
 			and (root.Position - record.marker.Position).Magnitude <= config.MAX_USE_DISTANCE
 	end
 	local succeeded, allowed, reason = pcall(function(): (boolean, string)
