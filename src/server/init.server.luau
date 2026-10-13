@@ -11,10 +11,15 @@ local dragAssembly = require(ReplicatedStorage.Shared.DragAssembly)
 local dragManipulation = require(ReplicatedStorage.Shared.DragManipulation)
 local physicsTargetMotion = require(ReplicatedStorage.Shared.PhysicsTargetMotion)
 local objectTargets = require(ReplicatedStorage.Shared.ObjectTargets)
+local objectMechanisms = require(ReplicatedStorage.Shared.ObjectMechanisms)
 local dragServer = require(script.DragServer)
 local weldServer = require(script.WeldServer)
 local interactionLocks = require(script.InteractionLocks)
 local interactionCharacter = require(ReplicatedStorage.Shared.InteractionCharacter)
+local interactionVisibility = require(ReplicatedStorage.Shared.InteractionVisibility)
+local RequestLimiter = require(ReplicatedStorage.Shared.RequestLimiter)
+local beginLimiter = RequestLimiter.new()
+local updateLimiter = RequestLimiter.new()
 local serverOwnership = require(script.ServerOwnership)
 serverOwnership.Start()
 
@@ -151,9 +156,9 @@ local function isValidTarget(target: any): boolean
 end
 
 local function isGroupDraggable(members: {DragTarget}): boolean
-	if not config.REQUIRE_ALL_MEMBERS_DRAGGABLE then return true end
 	for _, member in members do
-		if not isValidTarget(member) then return false end
+		if config.REQUIRE_ALL_MEMBERS_DRAGGABLE and not isValidTarget(member) then return false end
+		if config.BLOCK_OCCUPIED_SEATS and objectMechanisms.hasOccupant(member) then return false end
 	end
 	return true
 end
@@ -371,6 +376,7 @@ local function beginDrag(player: Player, target: any, hitPosition: any, request:
 	end
 
 	local typedTarget = getPreferredTarget(target :: DragTarget)
+	local character = player.Character
 	local root = getCharacterRoot(player)
 	if not root
 		or (root.Position - hitPosition).Magnitude > config.MAX_GRAB_DISTANCE
@@ -381,6 +387,7 @@ local function beginDrag(player: Player, target: any, hitPosition: any, request:
 	end
 	local members = weldServer.GetAssemblyTargets(typedTarget)
 	if not isGroupDraggable(members) then return false end
+	if not interactionVisibility.canSee(player, hitPosition, members) then return false end
 	local parts = objectTargets.getParts(members)
 	local release = interactionLocks:TryAcquire(objectTargets.getLockKeys(members, parts))
 	if not release then return false end
@@ -389,10 +396,12 @@ local function beginDrag(player: Player, target: any, hitPosition: any, request:
 		if request.cancelled or not dragServer.CanGrab(member, player.UserId) then return false end
 	end
 	root = getCharacterRoot(player)
-	if request.cancelled or player.Parent ~= Players or not root or not isValidTarget(typedTarget)
+	if request.cancelled or player.Parent ~= Players or player.Character ~= character or not root or not isValidTarget(typedTarget)
 		or not isGroupDraggable(members)
 		or (root.Position - hitPosition).Magnitude > config.MAX_GRAB_DISTANCE
 		or not weldServer.IsSameAssembly(typedTarget, members) then return false end
+	if not isPointInsideTarget(typedTarget, hitPosition)
+		or not interactionVisibility.canSee(player, hitPosition, members) then return false end
 	for _, part in parts do
 		if not part:IsDescendantOf(workspace) or not isFiniteCFrame(part.CFrame) then return false end
 	end
@@ -450,6 +459,7 @@ local function beginDrag(player: Player, target: any, hitPosition: any, request:
 end
 
 beginDragRemote.OnServerInvoke = function(player: Player, target: any, hitPosition: any)
+	if not beginLimiter:TryTake(player, config.BEGIN_REQUEST_RATE, config.BEGIN_REQUEST_BURST) then return false end
 	if pendingByPlayer[player] then return false end
 	local request: PendingRequest = {cancelled = false}
 	pendingByPlayer[player] = request
@@ -504,6 +514,7 @@ local function moveKinematic(player: Player, session: DragSession, root: BasePar
 end
 
 updateDragRemote.OnServerEvent:Connect(function(player: Player, target: any, desiredPivot: any, sessionId: any, rotationEdited: any)
+	if not updateLimiter:TryTake(player, config.UPDATE_REQUEST_RATE, config.UPDATE_REQUEST_BURST) then return end
 	local session = sessionsByPlayer[player]
 	if not session or target ~= session.target or sessionId ~= session.id then
 		return
@@ -523,7 +534,6 @@ updateDragRemote.OnServerEvent:Connect(function(player: Player, target: any, des
 	if session.rotationMode == config.ROTATION_MODE_CAMERA_RELATIVE or rotationEdited == true then
 		desiredRotation = desiredPivot.Rotation
 	end
-	if rotationEdited == true then session.rotation = desiredRotation end
 	if not root then
 		endSession(player)
 		return
@@ -535,6 +545,8 @@ updateDragRemote.OnServerEvent:Connect(function(player: Player, target: any, des
 		requestedPivot:PointToWorldSpace(session.localGrabPoint), root.Position, config.MAX_GRAB_DISTANCE
 	)
 	local sanitizedPivot = dragManipulation.desiredPivot(grabPosition, desiredRotation, session.localGrabPoint)
+	if not interactionVisibility.canSee(player, grabPosition, session.members) then return end
+	if rotationEdited == true then session.rotation = desiredRotation end
 
 	local physicsRig = session.physicsRig
 	if physicsRig then
@@ -560,6 +572,7 @@ updateDragRemote.OnServerEvent:Connect(function(player: Player, target: any, des
 end)
 
 endDragRemote.OnServerEvent:Connect(function(player: Player, target: any, sessionId: any)
+	-- Releasing a matching session is cheap and must always work, even after a burst.
 	local session = sessionsByPlayer[player]
 	if session and session.target == target and session.id == sessionId then
 		endSession(player)
@@ -577,12 +590,40 @@ end
 Players.PlayerRemoving:Connect(function(player)
 	cancelPending(player)
 	endSession(player)
+	beginLimiter:Remove(player)
+	updateLimiter:Remove(player)
 end)
 
 local function watchPlayer(player: Player)
+	local deathConnection: RBXScriptConnection? = nil
+	local addedConnection: RBXScriptConnection? = nil
+	local function clearCharacter()
+		if deathConnection then deathConnection:Disconnect(); deathConnection = nil end
+		if addedConnection then addedConnection:Disconnect(); addedConnection = nil end
+	end
+	local function watchCharacter(character: Model)
+		clearCharacter()
+		local function bindHumanoid(humanoid: Instance)
+			if not humanoid:IsA("Humanoid") or deathConnection then return end
+			deathConnection = humanoid.Died:Connect(function()
+				if player.Character ~= character then return end
+				cancelPending(player)
+				endSession(player)
+			end)
+		end
+		addedConnection = character.ChildAdded:Connect(bindHumanoid)
+		local humanoid = character:FindFirstChildWhichIsA("Humanoid")
+		if humanoid then bindHumanoid(humanoid) end
+	end
+	player.CharacterAdded:Connect(watchCharacter)
+	if player.Character then watchCharacter(player.Character) end
 	player.CharacterRemoving:Connect(function()
+		clearCharacter()
 		cancelPending(player)
 		endSession(player)
+	end)
+	player.AncestryChanged:Connect(function()
+		if player.Parent ~= Players then clearCharacter() end
 	end)
 end
 
@@ -643,6 +684,8 @@ RunService.Heartbeat:Connect(function(deltaTime: number)
 		local valid = getCharacterRoot(player) ~= nil and isValidTarget(session.target)
 			and isGroupDraggable(session.members)
 			and weldServer.IsSameAssembly(session.target, session.members)
+			and interactionVisibility.canSee(player,
+				dragAssembly.getPivot(session.assembly):PointToWorldSpace(session.localGrabPoint), session.members)
 		for _, part in session.assembly.parts do
 			if not part:IsDescendantOf(workspace) then valid = false; break end
 		end

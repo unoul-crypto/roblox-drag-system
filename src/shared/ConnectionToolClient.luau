@@ -15,6 +15,7 @@ local messages = {
 	Busy = "Объект занят — отпустите его и повторите",
 	Denied = "Действие запрещено серверной проверкой", EquipTool = "Возьмите нужный инструмент",
 	Failed = "Действие не выполнено",
+	NotAlive = "Персонаж должен быть жив", NotVisible = "Объект скрыт препятствием",
 }
 
 return function(tool: Tool, ownerScript: LocalScript, unweld: boolean)

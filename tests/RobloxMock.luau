@@ -31,6 +31,7 @@ Vector.__unm = function(a) return a * -1 end
 function Vector:Min(b) return vector(math.min(self.X, b.X), math.min(self.Y, b.Y), math.min(self.Z, b.Z)) end
 function Vector:Max(b) return vector(math.max(self.X, b.X), math.max(self.Y, b.Y), math.max(self.Z, b.Z)) end
 function Vector:Dot(b) return self.X * b.X + self.Y * b.Y + self.Z * b.Z end
+function Vector:Cross(b) return vector(self.Y*b.Z-self.Z*b.Y, self.Z*b.X-self.X*b.Z, self.X*b.Y-self.Y*b.X) end
 Mock.Vector3 = {new = vector, one = vector(1, 1, 1), zero = vector(0, 0, 0), yAxis = vector(0, 1, 0)}
 
 local Frame = {}
@@ -48,6 +49,8 @@ Frame.__index = function(frame, key)
 	if key == "Rotation" then return Mock.CFrame.newWithMatrix(vector(0, 0, 0), table.clone(matrix)) end
 	if key == "XVector" or key == "RightVector" then return vector(matrix[1], matrix[4], matrix[7]) end
 	if key == "YVector" then return vector(matrix[2], matrix[5], matrix[8]) end
+	if key == "UpVector" then return vector(matrix[2], matrix[5], matrix[8]) end
+	if key == "LookVector" then return vector(-matrix[3], -matrix[6], -matrix[9]) end
 	if key == "ZVector" then return vector(matrix[3], matrix[6], matrix[9]) end
 	return Frame[key]
 end
@@ -94,6 +97,7 @@ local instances = {}
 local meta = {}
 meta.__index = function(object, key)
 	if methods[key] then return methods[key] end
+	if key == "WorldAxis" and object.ClassName == "Attachment" then return object.Parent.CFrame.XVector end
 	if key == "Position" and object._properties.Position == nil then return object._properties.CFrame.Position end
 	if object._properties[key] ~= nil then return object._properties[key] end
 	for _, child in object._children do if child.Name == key then return child end end
@@ -120,6 +124,7 @@ meta.__newindex = function(object, key, value)
 	end
 	if key == "Parent" then
 		if value then table.insert(value._children, object) end
+		if value and previous ~= value then value.ChildAdded:Fire(object) end
 		object.AncestryChanged:Fire(object, value)
 		if value and previous ~= value then
 			local added = {object}
@@ -145,14 +150,15 @@ Mock.Instance = {new = function(class)
 			Size = vector(2, 2, 2), CFrame = Mock.CFrame.new(),
 			Destroying = signal(), AncestryChanged = signal(), OnServerEvent = signal(),
 			DescendantAdded = signal(), DescendantRemoving = signal(), networkAuto = true,
-			CharacterRemoving = signal()},
+			CharacterRemoving = signal(), CharacterAdded = signal(), ChildAdded = signal(), Died = signal(),
+			Health = 100, state = "HumanoidStateType.Running"},
 	}, meta)
 	table.insert(instances, object)
 	return object
 end}
 function methods:IsA(class)
 	return self.ClassName == class or class == "Instance"
-		or (class == "BasePart" and (self.ClassName == "Part" or self.ClassName == "MeshPart"))
+		or (class == "BasePart" and (self.ClassName == "Part" or self.ClassName == "MeshPart" or self.ClassName == "Seat" or self.ClassName == "VehicleSeat"))
 end
 function methods:IsDescendantOf(parent)
 	local current = self.Parent
@@ -168,8 +174,8 @@ function methods:GetDescendants()
 	end
 	return result
 end
-function methods:FindFirstChild(name)
-	for _, child in self._children do if child.Name == name then return child end end
+function methods:FindFirstChild(name, recursive)
+	for _, child in if recursive then self:GetDescendants() else self._children do if child.Name == name then return child end end
 	return nil
 end
 function methods:FindFirstChildWhichIsA(class, recursive)
@@ -219,6 +225,7 @@ function methods:GetNetworkOwnershipAuto() return self._properties.networkAuto e
 function methods:SetNetworkOwnershipAuto() self._properties.networkOwner, self._properties.networkAuto = nil, true end
 function methods:FireClient(player, ...) self._properties.lastClientEvent = {player, ...} end
 function methods:Move(direction) self._properties.moveDirection = direction end
+function methods:GetState() return self.state end
 
 Mock.workspace = Mock.Instance.new("Workspace")
 Mock.workspace.Gravity = 196.2
@@ -259,6 +266,10 @@ Mock.services = {CollectionService = collection, Players = players,
 	ReplicatedStorage = Mock.Instance.new("ReplicatedStorage"), RunService = {Heartbeat = signal(), PreSimulation = signal()}, TweenService = {}}
 Mock.params = {new = function() return {} end}
 function Mock.workspace:Blockcast() return nil end
+function Mock.workspace:Raycast(origin, direction, params)
+	Mock.lastRaycast = {origin = origin, direction = direction, params = params}
+	return Mock.rayBlocker
+end
 function Mock.workspace:GetPartBoundsInBox() return {} end
 function Mock.services.TweenService:SmoothDamp(current, target, velocity, smoothTime, maxSpeed, dt)
 	self.lastCall = {smoothTime = smoothTime, deltaTime = dt, maxSpeed = maxSpeed}
@@ -290,6 +301,8 @@ function Mock.player(id)
 	player.Character = Mock.Instance.new("Model")
 	player.Character.Parent = Mock.workspace
 	Mock.part("HumanoidRootPart", 0, player.Character)
+	local humanoid = Mock.Instance.new("Humanoid"); humanoid.Parent = player.Character
+	players.PlayerAdded:Fire(player)
 	return player
 end
 

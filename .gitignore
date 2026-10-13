@@ -1,8 +1,13 @@
-# Project place file
+# Studio scene: never overwrite this file with rojo build.
 /drag-system.rbxlx
+
+# Generated builds, kept separate from the Studio scene.
+/.build/
 
 # Roblox Studio lock files
 /*.rbxlx.lock
 /*.rbxl.lock
 
 sourcemap.json
+
+__pycache__/

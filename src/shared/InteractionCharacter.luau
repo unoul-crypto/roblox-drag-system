@@ -5,6 +5,8 @@ local InteractionCharacter = {}
 function InteractionCharacter.getRoot(player: Player): BasePart?
 	local character = player.Character
 	if not character or not character:IsDescendantOf(workspace) then return nil end
+	local humanoid = character:FindFirstChildWhichIsA("Humanoid")
+	if not humanoid or not (humanoid.Health > 0) or humanoid:GetState() == Enum.HumanoidStateType.Dead then return nil end
 	local root = character:FindFirstChild("HumanoidRootPart")
 	if not root or not root:IsA("BasePart") or not ObjectTargets.isFiniteCFrame(root.CFrame) then return nil end
 	return root

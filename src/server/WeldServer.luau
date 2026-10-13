@@ -4,7 +4,9 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local shared = ReplicatedStorage.Shared
 local config = require(shared.WeldConfig)
 local ObjectTargets = require(shared.ObjectTargets)
+local ObjectMechanisms = require(shared.ObjectMechanisms)
 local InteractionCharacter = require(shared.InteractionCharacter)
+local InteractionVisibility = require(shared.InteractionVisibility)
 local WeldGeometry = require(shared.WeldGeometry)
 local ConnectionGraph = require(shared.ConnectionGraph)
 local ValidationRegistry = require(shared.ValidationRegistry)
@@ -33,6 +35,7 @@ local function retainRig(target: Target, root: BasePart)
 	local folder = Instance.new("Folder")
 	folder.Name, folder.Parent = "WeldObjectRig", target
 	rigs[target] = {folder = folder, count = 1}
+	if ObjectMechanisms.isPreserved(target) then return end
 	for _, part in ObjectTargets.getParts({target}) do
 		if part ~= root then
 			local weld = Instance.new("WeldConstraint")
@@ -158,7 +161,7 @@ local function validPair(a: any, b: any): boolean
 end
 
 local function getContact(a: Target, b: Target): WeldGeometry.Contact?
-	return WeldGeometry.closestContact(ObjectTargets.getParts({a}), ObjectTargets.getParts({b}))
+	return WeldGeometry.closestContact(ObjectMechanisms.getWeldParts(a), ObjectMechanisms.getWeldParts(b))
 end
 
 local function inReach(player: Player, contact: WeldGeometry.Contact): boolean
@@ -232,28 +235,42 @@ local function createRecord(a: Target, b: Target, contact: WeldGeometry.Contact)
 	end
 end
 
--- Without an actor, server scripts skip player reach checks; object conditions still apply.
-function WeldServer.Weld(a: Target, b: Target, playerUserId: number?, contextCheck: (() -> boolean)?): (boolean, string)
+-- Without an actor, trusted server scripts skip character/reach/visibility checks.
+function WeldServer.Weld(a: Target, b: Target, playerUserId: number?, contextCheck: (() -> (boolean, string?))?): (boolean, string)
 	prune()
 	if not validPair(a, b) then return false, "InvalidTarget" end
 	if graph:HasEdge(a, b) then return false, "AlreadyWelded" end
 	local player = if playerUserId ~= nil then Players:GetPlayerByUserId(playerUserId) else nil
 	if playerUserId ~= nil and not player then return false, "OutOfReach" end
+	local character = if player then player.Character else nil
+	local function actorCheck(contact: WeldGeometry.Contact): (boolean, string?)
+		if not player then return true, nil end
+		if player.Character ~= character or not InteractionCharacter.getRoot(player) then return false, "NotAlive" end
+		if not inReach(player, contact) then return false, "OutOfReach" end
+		if not InteractionVisibility.canSee(player, contact.point0, {a, b})
+			or not InteractionVisibility.canSee(player, contact.point1, {a, b}) then return false, "NotVisible" end
+		return true, nil
+	end
 	local release = reserveGroups(a, b)
 	if not release then return false, "Busy" end
 	local succeeded, allowed, reason = pcall(function(): (boolean, string)
 		local contact = getContact(a, b)
 		if not contact or contact.distance > config.MAX_WELD_DISTANCE then return false, "TooFar" end
-		if player and not inReach(player, contact) then return false, "OutOfReach" end
+		local validActor, actorReason = actorCheck(contact)
+		if not validActor then return false, actorReason :: string end
 		if not validators:Check(a, b, playerUserId) then return false, "Denied" end
 		-- Validators may yield, so recheck before changing the scene.
 		if not validPair(a, b) or graph:HasEdge(a, b) or (player and player.Parent ~= Players) then
 			return false, "InvalidTarget"
 		end
-		if contextCheck and not contextCheck() then return false, "EquipTool" end
+		if contextCheck then
+			local validContext, contextReason = contextCheck()
+			if not validContext then return false, contextReason or "EquipTool" end
+		end
 		contact = getContact(a, b)
 		if not contact or contact.distance > config.MAX_WELD_DISTANCE then return false, "TooFar" end
-		if player and not inReach(player, contact) then return false, "OutOfReach" end
+		validActor, actorReason = actorCheck(contact)
+		if not validActor then return false, actorReason :: string end
 		createRecord(a, b, contact)
 		return true, "Welded"
 	end)
@@ -266,26 +283,34 @@ function WeldServer.TryWeld(a: Target, b: Target, playerUserId: number): (boolea
 	return WeldServer.Weld(a, b, playerUserId)
 end
 
-function WeldServer.Unweld(a: Target, b: Target, playerUserId: number?, contextCheck: (() -> boolean)?): (boolean, string)
+function WeldServer.Unweld(a: Target, b: Target, playerUserId: number?, contextCheck: (() -> (boolean, string?))?): (boolean, string)
 	local record = findRecord(a, b)
 	if not record then return false, "NotWelded" end
 	local player = if playerUserId ~= nil then Players:GetPlayerByUserId(playerUserId) else nil
 	if playerUserId ~= nil and not player then return false, "OutOfReach" end
 	local release = reserveGroups(a, b)
 	if not release then return false, "Busy" end
-	local function canReach(): boolean
-		if not player then return true end
+	local character = if player then player.Character else nil
+	local function actorCheck(): (boolean, string?)
+		if not player then return true, nil end
 		local root = InteractionCharacter.getRoot(player)
-		return player.Parent == Players and root ~= nil
-			and (root.Position - record.marker.Position).Magnitude <= config.MAX_USE_DISTANCE
+		if player.Character ~= character or not root then return false, "NotAlive" end
+		if player.Parent ~= Players or (root.Position - record.marker.Position).Magnitude > config.MAX_USE_DISTANCE then return false, "OutOfReach" end
+		if not InteractionVisibility.canSee(player, record.marker.Position, {a, b}) then return false, "NotVisible" end
+		return true, nil
 	end
 	local succeeded, allowed, reason = pcall(function(): (boolean, string)
-		if not canReach() then return false, "OutOfReach" end
+		local validActor, actorReason = actorCheck()
+		if not validActor then return false, actorReason :: string end
 		if not unweldValidators:Check(a, b, playerUserId) then return false, "Denied" end
 		-- The exact record must survive a yielding condition; never remove a replacement weld.
 		if not records[record] or not isRecordValid(record) then return false, "NotWelded" end
-		if contextCheck and not contextCheck() then return false, "EquipTool" end
-		if not canReach() then return false, "OutOfReach" end
+		if contextCheck then
+			local validContext, contextReason = contextCheck()
+			if not validContext then return false, contextReason or "EquipTool" end
+		end
+		validActor, actorReason = actorCheck()
+		if not validActor then return false, actorReason :: string end
 		removeRecord(record)
 		return true, "Unwelded"
 	end)
@@ -294,13 +319,15 @@ function WeldServer.Unweld(a: Target, b: Target, playerUserId: number?, contextC
 	return allowed, reason
 end
 
-function WeldServer.UnweldMarker(marker: any, playerUserId: number, contextCheck: (() -> boolean)?): (boolean, string)
+function WeldServer.UnweldMarker(marker: any, playerUserId: number, contextCheck: (() -> (boolean, string?))?): (boolean, string)
 	local a, b = WeldServer.GetWeldTargets(marker)
 	if not a or not b then return false, "InvalidMarker" end
 	return WeldServer.Unweld(a, b, playerUserId, contextCheck)
 end
 
-function WeldServer.WeldNearest(target: Target, playerUserId: number, contextCheck: (() -> boolean)?): (boolean, string, Target?)
+function WeldServer.WeldNearest(target: Target, playerUserId: number, contextCheck: (() -> (boolean, string?))?): (boolean, string, Target?)
+	local player = Players:GetPlayerByUserId(playerUserId)
+	if not player or not InteractionCharacter.getRoot(player) then return false, "NotAlive" end
 	if not ObjectTargets.isSupported(target) or not CollectionService:HasTag(target, config.TAG_NAME) then
 		return false, "InvalidTarget"
 	end

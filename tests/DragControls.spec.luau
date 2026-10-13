@@ -42,7 +42,7 @@ return function(mock, modules)
 	check(frameNear(yaw * cameraRelative, pitch), "Manual rotation can rebase camera-relative rotation without snapping")
 
 	local player = mock.player(301)
-	local humanoid = mock.Instance.new("Humanoid"); humanoid.Parent = player.Character
+	local humanoid = player.Character:FindFirstChildWhichIsA("Humanoid")
 	humanoid.WalkSpeed, humanoid.AutoRotate = 23, true
 	local camera = mock.Instance.new("Camera")
 	camera.CFrame, camera.Focus, camera.CameraType = mock.CFrame.new(0, 0, 10), identity, "CustomCamera"

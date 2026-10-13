@@ -3,6 +3,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local config = require(ReplicatedStorage.Shared.WeldConfig)
 local ObjectTargets = require(ReplicatedStorage.Shared.ObjectTargets)
 local InteractionCharacter = require(ReplicatedStorage.Shared.InteractionCharacter)
+local InteractionVisibility = require(ReplicatedStorage.Shared.InteractionVisibility)
 local WeldServer = require(script.Parent.WeldServer)
 
 local requests: {[Player]: number} = {}
@@ -24,6 +25,7 @@ local function registerRemote(name: string, toolName: string, unweld: boolean)
 		end
 		requests[player] = now
 		local character = player.Character
+		if not InteractionCharacter.getRoot(player) then return false, "NotAlive" end
 		if not equipped(player, toolName, character) then return false, "EquipTool" end
 		if not ObjectTargets.isSupported(hit) or typeof(point) ~= "Vector3"
 			or not ObjectTargets.isFiniteVector(point) then return false, "InvalidTarget" end
@@ -33,8 +35,18 @@ local function registerRemote(name: string, toolName: string, unweld: boolean)
 		if not target or not root
 			or not ObjectTargets.containsPoint(target, point)
 			or (root.Position - point).Magnitude > config.MAX_USE_DISTANCE then return false, "OutOfReach" end
+		local visibleTargets = if unweld then {WeldServer.GetWeldTargets(hit)} else {target}
+		if not InteractionVisibility.canSee(player, point, visibleTargets) then return false, "NotVisible" end
 		pending[player] = true
-		local guard = function() return equipped(player, toolName, character) end
+		local guard = function(): (boolean, string?)
+			local liveRoot = InteractionCharacter.getRoot(player)
+			if player.Character ~= character or not liveRoot then return false, "NotAlive" end
+			if not equipped(player, toolName, character) then return false, "EquipTool" end
+			if not ObjectTargets.isSupported(target) or not ObjectTargets.containsPoint(target, point) then return false, "InvalidTarget" end
+			if (liveRoot.Position - point).Magnitude > config.MAX_USE_DISTANCE then return false, "OutOfReach" end
+			if not InteractionVisibility.canSee(player, point, visibleTargets) then return false, "NotVisible" end
+			return true, nil
+		end
 		local operation = if unweld then WeldServer.UnweldMarker else WeldServer.WeldNearest
 		local ok, allowed, reason = pcall(operation, target, player.UserId, guard)
 		pending[player] = nil

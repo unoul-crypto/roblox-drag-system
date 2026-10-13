@@ -1,6 +1,7 @@
 return table.freeze({
 	TAG_NAME = "can-drag",
 	REQUIRE_ALL_MEMBERS_DRAGGABLE = true,
+	BLOCK_OCCUPIED_SEATS = true,
 
 	COLLISION_ATTRIBUTE = "DragCollisionMode",
 	COLLISION_MODE_NO_CLIP = "NoClip",
@@ -56,6 +57,10 @@ return table.freeze({
 	SERVER_VALIDATION_INTERVAL = 0.2,
 	MAX_RAY_DISTANCE = 500,
 	UPDATE_RATE = 1 / 30,
+	BEGIN_REQUEST_RATE = 4, -- Requests/second per player; separate from movement updates.
+	BEGIN_REQUEST_BURST = 2,
+	UPDATE_REQUEST_RATE = 60, -- Headroom for the normal 30 Hz client and network jitter.
+	UPDATE_REQUEST_BURST = 10,
 	COLLISION_PADDING = 0.05,
 	MARKER_SIZE = 0.35,
 	MARKER_COLOR = Color3.fromRGB(35, 145, 255),
