@@ -92,16 +92,19 @@ return function(mock, modules)
 	local accepted, _, payload = remotes.BeginDrag.OnServerInvoke(actor, part, part.Position)
 	check(accepted and not payload.clientAuthoritative, "New trajectory retains server-owned physical dragging")
 	local rig = part.DragSystemPhysicsRig
-	remotes.UpdateDrag.OnServerEvent:Fire(actor, part, mock.CFrame.new(6, 0, 0), payload.id, false)
+	-- This adapter keeps the physical assembly stationary; arrival must stay inside the lead cap.
+	local stationaryGoal = vector(if config.PHYSICS_TARGET_MAX_LEAD > 0
+		then math.min(6, config.PHYSICS_TARGET_MAX_LEAD * 0.75) else 6)
+	remotes.UpdateDrag.OnServerEvent:Fire(actor, part, mock.CFrame.new(stationaryGoal), payload.id, false)
 	check(vectorNear(rig.DragSystemAlignPosition.Position, zero), "A remote packet records the goal without jumping the intermediate target")
 	service.PreSimulation:Fire(1/60)
 	local firstPosition = rig.DragSystemAlignPosition.Position
-	check(firstPosition.X > 0 and firstPosition.X < 6 and vectorNear(part.Position, zero),
+	check(firstPosition.X > 0 and firstPosition.X < stationaryGoal.X and vectorNear(part.Position, zero),
 		"Physical frame advances only the AlignPosition goal, never the assembly CFrame")
 	service.PreSimulation:Fire(1/60)
 	check(rig.DragSystemAlignPosition.Position.X > firstPosition.X, "Target keeps moving smoothly without another remote packet")
 	for _ = 1, 120 do service.PreSimulation:Fire(1/60) end
-	check(vectorNear(rig.DragSystemAlignPosition.Position, vector(6), 0.005), "Smoothed target reaches a valid stationary goal")
+	check(vectorNear(rig.DragSystemAlignPosition.Position, stationaryGoal, 0.005), "Smoothed target reaches a valid stationary goal")
 	remotes.UpdateDrag.OnServerEvent:Fire(actor, part, mock.CFrame.new(100, 0, 0), payload.id, false)
 	for _ = 1, 120 do service.PreSimulation:Fire(1/60) end
 	check(rig.DragSystemAlignPosition.Position.Magnitude <= config.PHYSICS_TARGET_MAX_LEAD + 1e-6

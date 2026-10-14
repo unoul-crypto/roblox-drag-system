@@ -25,20 +25,20 @@ return table.freeze({
 	WEIGHT_SMOOTH_TIME_SCALE = 0.05,
 
 	PHYSICS_TARGET_SMOOTHING_ENABLED = true, -- false restores direct AlignPosition targets.
-	PHYSICS_TARGET_MAX_SPEED = 120, -- Also capped by the weight-adjusted PHYSICS_MAX_VELOCITY.
-	PHYSICS_TARGET_ACCELERATION = 400, -- Studs/s^2 at weight 1.
-	PHYSICS_TARGET_DECELERATION = 600, -- Studs/s^2 at weight 1.
-	PHYSICS_TARGET_RESPONSE_TIME = 0.06, -- Seconds to converge on the desired target velocity.
-	PHYSICS_TARGET_ACCELERATION_SMOOTH_TIME = 0.03, -- 0 disables smoothing of acceleration.
-	PHYSICS_TARGET_MAX_LEAD = 8, -- Maximum separation from the actual grab point; 0 disables the cap.
+	PHYSICS_TARGET_MAX_SPEED = 80, -- Also capped by the weight-adjusted PHYSICS_MAX_VELOCITY.
+	PHYSICS_TARGET_ACCELERATION = 300, -- Studs/s^2 at weight 1.
+	PHYSICS_TARGET_DECELERATION = 450, -- Studs/s^2 at weight 1.
+	PHYSICS_TARGET_RESPONSE_TIME = 0.12, -- Seconds to converge on the desired target velocity.
+	PHYSICS_TARGET_ACCELERATION_SMOOTH_TIME = 0.04, -- 0 disables smoothing of acceleration.
+	PHYSICS_TARGET_MAX_LEAD = 4, -- Maximum separation from the actual grab point; 0 disables the cap.
 
 	-- Base values below apply at weight = 1; LIGHT values are the limit near 0.
 	PHYSICS_WEIGHT_RESISTANCE_SCALE = 1,
 	PHYSICS_POSITION_RESPONSIVENESS = 20,
-	PHYSICS_LIGHT_POSITION_RESPONSIVENESS = 200,
+	PHYSICS_LIGHT_POSITION_RESPONSIVENESS = 60,
 	PHYSICS_MIN_POSITION_RESPONSIVENESS = 5,
 	PHYSICS_MAX_VELOCITY = 50,
-	PHYSICS_LIGHT_MAX_VELOCITY = 500,
+	PHYSICS_LIGHT_MAX_VELOCITY = 200,
 	PHYSICS_MIN_MAX_VELOCITY = 2,
 	PHYSICS_FORCE_GRAVITY_MULTIPLIER = 3,
 	PHYSICS_LIGHT_FORCE_GRAVITY_MULTIPLIER = 300,

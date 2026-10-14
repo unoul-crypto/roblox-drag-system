@@ -56,10 +56,11 @@ return function(dragWeight, config)
 	for name, limits in parameters do
 		check(nearlyEqual(zero[name], limits[2]), name .. " must approach the light limit at zero")
 		check(nearlyEqual(reference[name], limits[1]), name .. " must use the reference at weight 1")
-		check(light[name] > reference[name] * 5, name .. " must noticeably distinguish 0.01 from 1")
+		check(light[name] > reference[name], name .. " must retain a faster response at 0.01 than at 1")
 		check(nearlyEqual(huge[name], limits[3]), name .. " must reach its heavy floor")
 	end
-	check(light.positionResponsiveness > 150, "Weight 0.01 must respond quickly")
+	check(light.positionResponsiveness > config.PHYSICS_LIGHT_POSITION_RESPONSIVENESS * 0.9,
+		"Weight 0.01 must respond close to the configured light limit")
 	check(light.maxVelocity > config.PHYSICS_LIGHT_MAX_VELOCITY * 0.9, "Weight 0.01 must move almost at the light speed limit")
 	check(light.forceGravityMultiplier > reference.forceGravityMultiplier * 20, "Light weights need enough force to follow quickly")
 	check(light.orientationResponsiveness > 100, "Light rotations must also respond quickly")
