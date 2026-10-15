@@ -6,12 +6,12 @@ return table.freeze({
 	COLLISION_ATTRIBUTE = "DragCollisionMode",
 	COLLISION_MODE_NO_CLIP = "NoClip",
 	COLLISION_MODE_COLLIDE = "Collide",
-	DEFAULT_COLLISION_MODE = "NoClip",
+	DEFAULT_COLLISION_MODE = "Collide",
 
 	ROTATION_ATTRIBUTE = "DragRotationMode",
 	ROTATION_MODE_CAMERA_RELATIVE = "CameraRelative",
 	ROTATION_MODE_WORLD = "World",
-	DEFAULT_ROTATION_MODE = "World",
+	DEFAULT_ROTATION_MODE = "CameraRelative",
 
 	MANIPULATION_ROTATION_SPEED = 90, -- Degrees per second while holding Shift.
 	MANIPULATION_DISTANCE_STEP = 1, -- Studs per wheel notch; positive scroll moves closer.

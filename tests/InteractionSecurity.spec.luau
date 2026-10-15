@@ -15,6 +15,7 @@ return function(mock, modules)
 	local function drop(part, payload) remotes.EndDrag.OnServerEvent:Fire(actor, part, payload.id) end
 	local function owned(part) return part:GetNetworkOwner() == nil and not part:GetNetworkOwnershipAuto() end
 	local part = target("SecureZero", 2, 0, false)
+	part:SetAttribute("DragCollisionMode", "NoClip")
 	check(owned(part), "Tagging an idle unanchored part immediately gives it manual server ownership")
 	local accepted, _, payload = remotes.BeginDrag.OnServerInvoke(actor, part, part.Position)
 	check(accepted and not payload.clientAuthoritative and owned(part), "Zero weight never gives the client physics authority")

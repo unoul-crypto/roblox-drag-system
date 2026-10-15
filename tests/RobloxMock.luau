@@ -15,6 +15,11 @@ local function signal()
 			if connection.Connected then callback(...) end
 		end
 	end
+	function event:ListenerCount()
+		local count = 0
+		for connection in callbacks do if connection.Connected then count += 1 end end
+		return count
+	end
 	return event
 end
 
@@ -152,6 +157,7 @@ Mock.Instance = {new = function(class)
 			DescendantAdded = signal(), DescendantRemoving = signal(), networkAuto = true,
 			CharacterRemoving = signal(), CharacterAdded = signal(), ChildAdded = signal(), Died = signal(),
 			Event = signal(), CollisionGroup = "Default",
+			Touched = signal(), CanTouch = true,
 			Health = 100, state = "HumanoidStateType.Running"},
 	}, meta)
 	table.insert(instances, object)
@@ -227,6 +233,7 @@ function methods:SetNetworkOwnershipAuto() self._properties.networkOwner, self._
 function methods:FireClient(player, ...) self._properties.lastClientEvent = {player, ...} end
 function methods:Move(direction) self._properties.moveDirection = direction end
 function methods:GetState() return self.state end
+function methods:GetTouchingParts() return (Mock.touching or {})[self] or {} end
 function methods:Fire(...) self.Event:Fire(...) end
 
 Mock.workspace = Mock.Instance.new("Workspace")
@@ -266,13 +273,20 @@ end
 function players:GetPlayers() return self:GetChildren() end
 Mock.services = {CollectionService = collection, Players = players,
 	ReplicatedStorage = Mock.Instance.new("ReplicatedStorage"), RunService = {Heartbeat = signal(), PreSimulation = signal()}, TweenService = {}}
+Mock.services.PhysicsService = {CollisionGroupsAreCollidable = function(_, a, b)
+	return not (Mock.blockedCollisionGroups and (Mock.blockedCollisionGroups[a .. ":" .. b]
+		or Mock.blockedCollisionGroups[b .. ":" .. a]))
+end}
 Mock.params = {new = function() return {} end}
 function Mock.workspace:Blockcast() return nil end
 function Mock.workspace:Raycast(origin, direction, params)
 	Mock.lastRaycast = {origin = origin, direction = direction, params = params}
 	return Mock.rayBlocker
 end
-function Mock.workspace:GetPartBoundsInBox() return {} end
+function Mock.workspace:GetPartBoundsInBox(frame, size, params)
+	if Mock.boundsQuery then return Mock.boundsQuery(frame, size, params) end
+	return {}
+end
 function Mock.workspace:GetPartsInPart(part) return (Mock.overlaps or {})[part] or {} end
 function Mock.services.TweenService:SmoothDamp(current, target, velocity, smoothTime, maxSpeed, dt)
 	self.lastCall = {smoothTime = smoothTime, deltaTime = dt, maxSpeed = maxSpeed}

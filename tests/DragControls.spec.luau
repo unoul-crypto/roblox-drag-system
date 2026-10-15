@@ -106,6 +106,7 @@ return function(mock, modules)
 	-- Exercise actual server handlers with full rotation matrices, without simulating physics.
 	local actor = mock.player(302)
 	local part = mock.part("ManualRotation", 2)
+	part:SetAttribute("DragRotationMode", "World")
 	part.Anchored = true
 	part:SetAttribute("weight", 1)
 	mock.services.CollectionService:AddTag(part, "can-drag")

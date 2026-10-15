@@ -220,6 +220,94 @@ return function(mock, modules, startRuntime)
 	check(freeze.IsFrozen(part), "Collision policy can be disabled")
 	freeze.Unfreeze(part); mock.overlaps = {}; config.UNFREEZE_ON_COLLISION = true
 
+	-- Landing is a surface contact, often involving noncollidable R15/R6 body parts.
+	local foot = mock.part("LeftFoot", 3, other.Character)
+	foot.CanCollide = false
+	local footHeight = part.Size.Y * 0.5 + foot.Size.Y * 0.5
+	foot.CFrame = mock.CFrame.new(part.Position.X, footHeight, 0)
+	local bounds = {}
+	mock.boundsQuery = function() return bounds end
+	check(freeze.Freeze(part, actor.UserId), "Freeze before landing surface contact")
+	bounds = {foot}; tick()
+	check(not freeze.IsFrozen(part) and reasons[#reasons] == "Collision",
+		"Noncollidable character foot touching the top surface unfreezes without a volume overlap")
+	bounds = {}
+	local collider = mock.part("SurfaceCollider", 5)
+	check(freeze.Freeze(part, actor.UserId), "Freeze before physics contact without overlap")
+	mock.touching = {[part] = {collider}}; tick()
+	check(not freeze.IsFrozen(part), "Physics contact manifold unfreezes when parts only share a surface")
+	mock.touching = {}
+	check(freeze.Freeze(part, actor.UserId), "Freeze before transient landing")
+	mock.clock += config.COLLISION_GRACE_TIME + 0.01
+	part.Touched:Fire(foot)
+	foot.CFrame = mock.CFrame.new(20, 20, 20)
+	tick()
+	check(not freeze.IsFrozen(part), "Verified short touch survives until the policy tick even after the foot moves away")
+	check(freeze.Freeze(part, actor.UserId), "Freeze before a spoofed distant touch")
+	part.Touched:Fire(foot)
+	mock.touching[part] = {foot}
+	tick()
+	check(freeze.IsFrozen(part), "Far touch event and stale physics contact cannot unfreeze without nearby geometry")
+	mock.touching = {}
+	foot.CFrame = mock.CFrame.new(part.Position.X, footHeight, 0)
+	part.Touched:Fire(foot); tick()
+	check(not freeze.IsFrozen(part), "The same foot can trigger a later valid landing")
+	check(freeze.Freeze(part, actor.UserId), "Freeze before protected character touch")
+	collection:AddTag(other.Character, config.IGNORE_COLLISION_TAG)
+	part.Touched:Fire(foot); bounds = {foot}; tick()
+	check(freeze.IsFrozen(part), "not-unfreeze on a character protects body-part contacts")
+	bounds = {}; tick()
+	collection:RemoveTag(other.Character, config.IGNORE_COLLISION_TAG)
+	part.Touched:Fire(foot); tick()
+	check(not freeze.IsFrozen(part), "A new unprotected body contact unfreezes")
+	check(freeze.Freeze(part, actor.UserId), "Freeze before collision-group rejection")
+	foot.CollisionGroup = "GhostCharacter"
+	mock.blockedCollisionGroups = {["Default:GhostCharacter"] = true}
+	part.Touched:Fire(foot); bounds = {foot}; tick()
+	check(freeze.IsFrozen(part), "Noncolliding collision groups cannot trigger touch unfreeze")
+	mock.blockedCollisionGroups = nil; foot.CollisionGroup = "Default"; bounds = {}
+	freeze.Unfreeze(part)
+	check(freeze.Freeze(part, actor.UserId), "Freeze before non-character decoration overlap")
+	local decoration = mock.part("NoncollidableDecoration", 5); decoration.CanCollide = false
+	bounds = {decoration}; part.Touched:Fire(decoration); tick()
+	check(freeze.IsFrozen(part), "A noncollidable ordinary decoration remains ignored")
+	bounds = {}; freeze.Unfreeze(part)
+	check(freeze.Freeze(part, actor.UserId), "Freeze before outside-surface tolerance test")
+	foot.CFrame = mock.CFrame.new(part.Position.X, footHeight + config.COLLISION_CONTACT_DISTANCE + 0.02, 0)
+	bounds = {foot}; part.Touched:Fire(foot); tick()
+	check(freeze.IsFrozen(part), "Nearby bounding-box candidate beyond the actual contact skin cannot unfreeze")
+	bounds = {}; freeze.Unfreeze(part)
+	foot.CFrame = mock.CFrame.new(part.Position.X, footHeight + config.COLLISION_CONTACT_DISTANCE * 0.5, 0)
+	check(freeze.Freeze(part, actor.UserId), "Freeze before contact-skin landing")
+	bounds = {foot}; tick()
+	check(not freeze.IsFrozen(part), "Small physics skin gap is accepted as landing contact")
+	bounds = {foot}
+	check(freeze.Freeze(part, actor.UserId), "Freeze while a foot already touches")
+	part.Touched:Fire(foot); tick()
+	check(freeze.IsFrozen(part), "Initial character contact is captured before Touched and does not immediately thaw")
+	bounds = {}; tick()
+	bounds = {foot}; tick()
+	check(not freeze.IsFrozen(part), "Leaving and landing again counts as a new character contact")
+	bounds = {}
+	check(freeze.Freeze(part, actor.UserId), "Freeze to test touch-listener cleanup")
+	check(part.Touched:ListenerCount() == 1, "Only the active freeze installs a touch listener")
+	freeze.Unfreeze(part)
+	check(part.Touched:ListenerCount() == 0, "Unfreezing disconnects touch listeners")
+	foot.CFrame = mock.CFrame.new(20,20,20)
+	check(freeze.Freeze(part, actor.UserId), "Re-freeze with a new contact baseline")
+	check(part.Touched:ListenerCount() == 1, "Repeated freezing does not accumulate listeners")
+	part.Touched:Fire(foot); tick()
+	check(freeze.IsFrozen(part), "Old listeners cannot thaw a new freeze through a stale distant event")
+	freeze.Unfreeze(part)
+	part.CanTouch = false
+	foot.CFrame = mock.CFrame.new(part.Position.X, footHeight, 0)
+	check(freeze.Freeze(part, actor.UserId) and part.Touched:ListenerCount() == 0,
+		"A model with CanTouch disabled uses contact queries without attaching an invalid listener")
+	bounds = {foot}; tick()
+	check(not freeze.IsFrozen(part), "Surface queries still detect landing when touch events are disabled")
+	part.CanTouch = true; bounds = {}
+	mock.boundsQuery, mock.touching = nil, nil
+
 	-- Pending validators cannot commit stale life, graph or player intent.
 	local function defer(mutate, message)
 		local unregister = freeze.RegisterFreezeValidator(function() coroutine.yield(); return true end)

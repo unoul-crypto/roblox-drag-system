@@ -9,6 +9,7 @@ return table.freeze({
 	CHECK_INTERVAL = 0.1,
 	COLLISION_GRACE_TIME = 0.1,
 	COLLISION_TOLERANCE = 0.02,
+	COLLISION_CONTACT_DISTANCE = 0.1, -- Contact skin for surface touches and character feet, in studs.
 	REQUEST_RATE = 4,
 	REQUEST_BURST = 2,
 })
