@@ -21,6 +21,7 @@ local RequestLimiter = require(ReplicatedStorage.Shared.RequestLimiter)
 local beginLimiter = RequestLimiter.new()
 local updateLimiter = RequestLimiter.new()
 local serverOwnership = require(script.ServerOwnership)
+local freezeServer = require(script.FreezeServer)
 serverOwnership.Start()
 
 type DragTarget = BasePart | Model
@@ -348,7 +349,7 @@ local function destroyPhysicsDragRig(rig: PhysicsDragRig?)
 
 end
 
-local function endSession(player: Player)
+local function endSession(player: Player, freezeOnRelease: boolean?)
 	local session = sessionsByPlayer[player]
 	if not session then
 		return
@@ -366,6 +367,12 @@ local function endSession(player: Player)
 	serverOwnership.Claim(session.assembly.parts)
 	session.release()
 	if player.Parent == Players then dragEndedRemote:FireClient(player, session.target, session.id) end
+	if freezeOnRelease then
+		local character = player.Character
+		freezeServer.Freeze(session.target, player.UserId, function()
+			return player.Character == character and weldServer.IsSameAssembly(session.target, session.members)
+		end)
+	end
 end
 
 local function beginDrag(player: Player, target: any, hitPosition: any, request: PendingRequest): (boolean, DragTarget?, any?)
@@ -405,6 +412,7 @@ local function beginDrag(player: Player, target: any, hitPosition: any, request:
 	for _, part in parts do
 		if not part:IsDescendantOf(workspace) or not isFiniteCFrame(part.CFrame) then return false end
 	end
+	freezeServer.UnfreezeMembers(members, "Grabbed")
 
 	local collisionMode = getCollisionMode(typedTarget)
 	local modelRig = createModelRig(typedTarget, parts, hitPosition, collisionMode)
@@ -450,6 +458,7 @@ local function beginDrag(player: Player, target: any, hitPosition: any, request:
 	}
 	for _, member in members do ownerByTarget[member] = player end
 	stopTargetMotion(parts)
+	dragServer.NotifyGrabbed(typedTarget, player.UserId)
 	return true, typedTarget, {
 		id = nextSessionId, assembly = assembly, weight = weight,
 		rotation = pivot.Rotation, localGrabPoint = pivot:PointToObjectSpace(hitPosition),
@@ -575,7 +584,7 @@ endDragRemote.OnServerEvent:Connect(function(player: Player, target: any, sessio
 	-- Releasing a matching session is cheap and must always work, even after a burst.
 	local session = sessionsByPlayer[player]
 	if session and session.target == target and session.id == sessionId then
-		endSession(player)
+		endSession(player, true)
 	end
 end)
 

@@ -151,6 +151,7 @@ Mock.Instance = {new = function(class)
 			Destroying = signal(), AncestryChanged = signal(), OnServerEvent = signal(),
 			DescendantAdded = signal(), DescendantRemoving = signal(), networkAuto = true,
 			CharacterRemoving = signal(), CharacterAdded = signal(), ChildAdded = signal(), Died = signal(),
+			Event = signal(), CollisionGroup = "Default",
 			Health = 100, state = "HumanoidStateType.Running"},
 	}, meta)
 	table.insert(instances, object)
@@ -226,6 +227,7 @@ function methods:SetNetworkOwnershipAuto() self._properties.networkOwner, self._
 function methods:FireClient(player, ...) self._properties.lastClientEvent = {player, ...} end
 function methods:Move(direction) self._properties.moveDirection = direction end
 function methods:GetState() return self.state end
+function methods:Fire(...) self.Event:Fire(...) end
 
 Mock.workspace = Mock.Instance.new("Workspace")
 Mock.workspace.Gravity = 196.2
@@ -271,6 +273,7 @@ function Mock.workspace:Raycast(origin, direction, params)
 	return Mock.rayBlocker
 end
 function Mock.workspace:GetPartBoundsInBox() return {} end
+function Mock.workspace:GetPartsInPart(part) return (Mock.overlaps or {})[part] or {} end
 function Mock.services.TweenService:SmoothDamp(current, target, velocity, smoothTime, maxSpeed, dt)
 	self.lastCall = {smoothTime = smoothTime, deltaTime = dt, maxSpeed = maxSpeed}
 	return current:Lerp(target, 1 - math.exp(-dt / smoothTime)), velocity

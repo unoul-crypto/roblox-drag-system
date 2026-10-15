@@ -4,6 +4,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local config = require(ReplicatedStorage.Shared.VehicleConfig)
 local dragConfig = require(ReplicatedStorage.Shared.DragConfig)
 local weldConfig = require(ReplicatedStorage.Shared.WeldConfig)
+local freezeConfig = require(ReplicatedStorage.Shared.FreezeConfig)
 local ObjectMechanisms = require(ReplicatedStorage.Shared.ObjectMechanisms)
 local WeldServer = require(script.Parent.WeldServer)
 local VehicleDemo = {}
@@ -19,6 +20,7 @@ end
 local function tag(target: Instance)
 	CollectionService:AddTag(target, dragConfig.TAG_NAME)
 	CollectionService:AddTag(target, weldConfig.TAG_NAME)
+	CollectionService:AddTag(target, freezeConfig.TAG_NAME)
 	target:SetAttribute(dragConfig.WEIGHT_ATTRIBUTE, 1)
 end
 

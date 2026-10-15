@@ -126,6 +126,8 @@ return function(mock, modules, startVehicleRuntime)
 	remotes.EndDrag.OnServerEvent:Fire(actor, platform, payload.id)
 	check(wheels[1].WheelMotor.Parent == wheels[1] and #wheels[1].WeldObjectRig:GetChildren() == 0,
 		"Dropping removes temporary welds and restores the original movable mechanism")
+	check(modules.FreezeServer.IsFrozen(platform), "Freezable demo car freezes as one group after release")
+	check(modules.FreezeServer.Unfreeze(platform), "Unfreeze demo car before driving it again")
 	check(input(false) == false, "Standing player cannot renew driving input")
 	local unregister = modules.DragServer.RegisterGrabValidator(function() coroutine.yield(); return true end)
 	local result

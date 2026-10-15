@@ -28,7 +28,7 @@ def main() -> None:
     for name in ["ConnectionGraph", "TargetLocks", "ValidationRegistry", "WeldConfig",
                  "DragConfig", "DragWeight", "DragCollision", "ObjectTargets", "DragAssembly", "WeldGeometry",
                  "DragManipulation", "DragInputController", "PhysicsTargetMotion", "InteractionCharacter",
-                 "InteractionVisibility", "RequestLimiter", "ObjectMechanisms", "VehicleConfig", "VehicleMotion"]:
+                 "InteractionVisibility", "RequestLimiter", "ObjectMechanisms", "VehicleConfig", "VehicleMotion", "FreezeConfig"]:
         sections += [f'modules["{name}"] = (function()', source(f"src/shared/{name}.luau"), "end)()",
                      f'mock.services.ReplicatedStorage.Shared["{name}"] = "{name}"',
                      f'script.Parent["{name}"] = "{name}"']
@@ -38,15 +38,17 @@ def main() -> None:
                  'modules.DragConfig.BEGIN_REQUEST_BURST = 10000',
                  'modules.DragConfig.UPDATE_REQUEST_BURST = 10000',
                  'modules.WeldConfig = table.clone(modules.WeldConfig)']
+    sections += ['modules.FreezeConfig = table.clone(modules.FreezeConfig)']
     sections += ['modules.InteractionLocks = modules.TargetLocks.new()',
                  'script.Parent.InteractionLocks = "InteractionLocks"']
-    for name in ["DragServer", "WeldServer", "ServerOwnership", "VehicleServer", "VehicleDemo"]:
+    for name in ["DragServer", "WeldServer", "ServerOwnership", "FreezeServer", "FreezePolicies", "VehicleServer", "VehicleDemo"]:
         sections += [f'modules["{name}"] = (function()', source(f"src/server/{name}.luau"), "end)()",
                      f'script.Parent["{name}"] = "{name}"']
     sections += ["local function startDragRuntime()", "local script = script.Parent",
                  source("src/server/init.server.luau"), "end",
                  "local function startWeldRuntime()", source("src/server/WeldRuntime.server.luau"), "end",
                  "local function startVehicleRuntime()", source("src/server/VehicleRuntime.server.luau"), "end",
+                 "local function startFreezeRuntime()", source("src/server/FreezeRuntime.server.luau"), "end",
                  "local runTests = (function()", source("tests/Welding.spec.luau"), "end)()",
                  "runTests(mock, modules, startDragRuntime, startWeldRuntime)",
                  "local runExtensions = (function()", source("tests/WeldExtensions.spec.luau"), "end)()",
@@ -62,7 +64,9 @@ def main() -> None:
                  "local runGuards = (function()", source("tests/InteractionGuards.spec.luau"), "end)()",
                  "runGuards(mock, modules)",
                  "local runVehicles = (function()", source("tests/Vehicle.spec.luau"), "end)()",
-                 "runVehicles(mock, modules, startVehicleRuntime)"]
+                 "runVehicles(mock, modules, startVehicleRuntime)",
+                 "local runFreeze = (function()", source("tests/Freeze.spec.luau"), "end)()",
+                 "runFreeze(mock, modules, startFreezeRuntime)"]
     with tempfile.TemporaryDirectory(prefix="weld-tests-") as directory:
         script_path = Path(directory) / "run.luau"
         script_path.write_text("\n".join(sections), encoding="utf-8")
