@@ -24,6 +24,9 @@
     },
 
     "StarterPack": {
+      "JackTool": {
+        "$path": "src/tools/JackTool"
+      },
       "WeldTool": {
         "$path": "src/tools/WeldTool"
       },

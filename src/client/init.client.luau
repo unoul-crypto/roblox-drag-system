@@ -10,6 +10,7 @@ local dragAssembly = require(ReplicatedStorage.Shared.DragAssembly)
 local dragManipulation = require(ReplicatedStorage.Shared.DragManipulation)
 local DragInputController = require(ReplicatedStorage.Shared.DragInputController)
 local weldConfig = require(ReplicatedStorage.Shared.WeldConfig)
+local jackConfig = require(ReplicatedStorage.Shared.JackConfig)
 local objectTargets = require(ReplicatedStorage.Shared.ObjectTargets)
 local remotes = ReplicatedStorage:WaitForChild("DragRemotes")
 local beginDragRemote = remotes:WaitForChild("BeginDrag") :: RemoteFunction
@@ -45,7 +46,7 @@ local inputController = DragInputController.new(player, function(wheel: number)
 end)
 
 local function isConnectionToolEquipped(): boolean
-	for _, name in {weldConfig.TOOL_NAME, weldConfig.UNWELD_TOOL_NAME} do
+	for _, name in {weldConfig.TOOL_NAME, weldConfig.UNWELD_TOOL_NAME, jackConfig.TOOL_NAME} do
 		local tool = player.Character and player.Character:FindFirstChild(name)
 		if tool and tool:IsA("Tool") then return true end
 	end

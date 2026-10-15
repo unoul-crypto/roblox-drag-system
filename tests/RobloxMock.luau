@@ -158,6 +158,8 @@ Mock.Instance = {new = function(class)
 			CharacterRemoving = signal(), CharacterAdded = signal(), ChildAdded = signal(), Died = signal(),
 			Event = signal(), CollisionGroup = "Default",
 			Touched = signal(), CanTouch = true,
+			Triggered = signal(),
+			Equipped = signal(), Unequipped = signal(), Activated = signal(),
 			Health = 100, state = "HumanoidStateType.Running"},
 	}, meta)
 	table.insert(instances, object)
@@ -185,6 +187,7 @@ function methods:FindFirstChild(name, recursive)
 	for _, child in if recursive then self:GetDescendants() else self._children do if child.Name == name then return child end end
 	return nil
 end
+function methods:WaitForChild(name) return assert(self:FindFirstChild(name), name) end
 function methods:FindFirstChildWhichIsA(class, recursive)
 	for _, child in if recursive then self:GetDescendants() else self._children do
 		if child:IsA(class) then return child end
@@ -234,6 +237,7 @@ function methods:FireClient(player, ...) self._properties.lastClientEvent = {pla
 function methods:Move(direction) self._properties.moveDirection = direction end
 function methods:GetState() return self.state end
 function methods:GetTouchingParts() return (Mock.touching or {})[self] or {} end
+function methods:GetConnectedParts() return (Mock.nativeConnected or {})[self] or {} end
 function methods:Fire(...) self.Event:Fire(...) end
 
 Mock.workspace = Mock.Instance.new("Workspace")
@@ -272,15 +276,17 @@ function players:GetPlayerByUserId(id)
 end
 function players:GetPlayers() return self:GetChildren() end
 Mock.services = {CollectionService = collection, Players = players,
-	ReplicatedStorage = Mock.Instance.new("ReplicatedStorage"), RunService = {Heartbeat = signal(), PreSimulation = signal()}, TweenService = {}}
+	ReplicatedStorage = Mock.Instance.new("ReplicatedStorage"), RunService = {Heartbeat = signal(), PreSimulation = signal(), RenderStepped = signal()}, TweenService = {}}
 Mock.services.PhysicsService = {CollisionGroupsAreCollidable = function(_, a, b)
 	return not (Mock.blockedCollisionGroups and (Mock.blockedCollisionGroups[a .. ":" .. b]
 		or Mock.blockedCollisionGroups[b .. ":" .. a]))
 end}
 Mock.params = {new = function() return {} end}
 function Mock.workspace:Blockcast() return nil end
+function Mock.workspace:Shapecast() return nil end
 function Mock.workspace:Raycast(origin, direction, params)
 	Mock.lastRaycast = {origin = origin, direction = direction, params = params}
+	if Mock.raycastQuery then return Mock.raycastQuery(origin, direction, params) end
 	return Mock.rayBlocker
 end
 function Mock.workspace:GetPartBoundsInBox(frame, size, params)

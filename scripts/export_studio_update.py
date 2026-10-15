@@ -9,7 +9,7 @@ ROOTS = {
     "ReplicatedStorage": {"Shared"},
     "ServerScriptService": {"Server"},
     "StarterPlayer": {"StarterPlayerScripts"},
-    "StarterPack": {"WeldTool", "UnweldTool"},
+    "StarterPack": {"WeldTool", "UnweldTool", "JackTool"},
 }
 PROPERTIES = {
     "Source", "RunContext", "Disabled", "Enabled", "RequiresHandle", "CanBeDropped",
