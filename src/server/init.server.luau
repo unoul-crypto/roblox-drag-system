@@ -368,6 +368,8 @@ local function endSession(player: Player, freezeOnRelease: boolean?)
 	session.release()
 	if player.Parent == Players then dragEndedRemote:FireClient(player, session.target, session.id) end
 	if freezeOnRelease then
+		-- Release old records before starting the new freeze, including when that freeze is denied.
+		freezeServer.UnfreezeAll(player.UserId, "Released")
 		local character = player.Character
 		freezeServer.Freeze(session.target, player.UserId, function()
 			return player.Character == character and weldServer.IsSameAssembly(session.target, session.members)

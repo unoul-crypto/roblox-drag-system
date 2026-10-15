@@ -90,7 +90,7 @@ return function(mock, modules, startRuntime)
 	check(not freeze.IsFrozen(a) and not a.Anchored and not b.Anchored and not c.Anchored,
 		"Changing a frozen graph releases all original members without stale anchors")
 
-	-- Default rules enforce FIFO both when grabbing a new object and through direct API freezing.
+	-- Voluntary release thaws all older owned groups; direct API creation retains its FIFO limit.
 	local max = config.MAX_FROZEN_MODELS
 	local quota = {}
 	for index = 1,max do
@@ -102,13 +102,56 @@ return function(mock, modules, startRuntime)
 	check(not grab(nextPart) and freeze.IsFrozen(quota[1]), "Rejected grab does not evict old frozen models")
 	rejectGrab()
 	ok, _, payload = grab(nextPart)
-	check(ok and not freeze.IsFrozen(quota[1]) and freeze.IsFrozen(quota[2]), "Successful new grab immediately frees the oldest slot")
+	check(ok and #freeze.GetFrozenModels(actor.UserId) == max and freeze.IsFrozen(quota[1]),
+		"Grabbing a different model preserves old freezes until release")
+	check(freeze.Freeze(part, other.UserId), "Prepare another player's frozen object")
+	drop(nextPart, {id = payload.id - 1})
+	check(#freeze.GetFrozenModels(actor.UserId) == max and not nextPart.Anchored,
+		"Stale release cannot thaw existing models or end the active drag")
 	drop(nextPart,payload)
-	check(#freeze.GetFrozenModels(actor.UserId) == max, "Releasing new object fills the reserved slot")
-	local apiPart = target("QuotaAPI", 9)
-	check(freeze.Freeze(apiPart, actor.UserId) and not freeze.IsFrozen(quota[2]), "Direct API freezing also respects the same FIFO limit")
-	check(freeze.GetFrozenModels(actor.UserId)[1] == quota[3], "API lists frozen entries oldest first")
+	check(#freeze.GetFrozenModels(actor.UserId) == 1 and freeze.IsFrozen(nextPart) and nextPart.Anchored,
+		"Releasing keeps only the newly frozen model, independently of the quota")
+	for _, old in quota do check(not freeze.IsFrozen(old) and not old.Anchored, "Every older owned model is unanchored on release") end
+	check(freeze.IsFrozen(part) and part.Anchored, "Releasing does not unfreeze another player's models")
+	drop(nextPart, payload)
+	check(freeze.IsFrozen(nextPart), "Repeated release cannot thaw the newly frozen model")
+	freeze.UnfreezeAll(other.UserId)
 	freeze.UnfreezeAll(actor.UserId)
+	for _, old in quota do check(freeze.Freeze(old, actor.UserId), "Refill API quota") end
+	local apiPart = target("QuotaAPI", 9)
+	check(freeze.Freeze(apiPart, actor.UserId) and not freeze.IsFrozen(quota[1]), "Direct API freezing respects the FIFO limit")
+	check(freeze.GetFrozenModels(actor.UserId)[1] == quota[2], "API lists frozen entries oldest first")
+	freeze.UnfreezeAll(actor.UserId)
+	check(freeze.Freeze(part, actor.UserId), "Freeze an old object before dropping a non-freezable one")
+	ok, _, payload = grab(plain)
+	check(ok and freeze.IsFrozen(part), "Grabbing a non-freezable model preserves existing freezes")
+	drop(plain, payload)
+	check(not freeze.IsFrozen(part) and not part.Anchored and #freeze.GetFrozenModels(actor.UserId) == 0,
+		"Releasing a model without can-freeze still thaws all previous models")
+	check(freeze.Freeze(part, actor.UserId), "Freeze before a denied release freeze")
+	deny = freeze.RegisterFreezeValidator(function() return false end)
+	ok, _, payload = grab(nextPart); drop(nextPart, payload)
+	check(ok and not freeze.IsFrozen(part) and not part.Anchored and not freeze.IsFrozen(nextPart),
+		"Custom freeze denial does not prevent old models thawing on release")
+	deny()
+	check(freeze.Freeze(a, actor.UserId), "Freeze a welded group before release")
+	ok, _, payload = grab(nextPart); drop(nextPart, payload)
+	check(ok and not freeze.IsFrozen(a) and not a.Anchored and not b.Anchored and freeze.IsFrozen(nextPart),
+		"Release also thaws every part of an older welded group")
+	freeze.UnfreezeAll(actor.UserId)
+	local stopWaiting = freeze.RegisterFreezeValidator(function(candidate)
+		if candidate == part then coroutine.yield() end
+		return true
+	end)
+	local pendingResult
+	local waiting = coroutine.create(function() pendingResult = freeze.Freeze(part, actor.UserId) end)
+	check(coroutine.resume(waiting) and locks:IsLocked(part), "Older freeze can be waiting on a condition")
+	ok, _, payload = grab(nextPart); drop(nextPart, payload)
+	check(ok and freeze.IsFrozen(nextPart) and not locks:IsLocked(part),
+		"Release cancels older pending freezes before committing the new one")
+	check(coroutine.resume(waiting) and not pendingResult and not freeze.IsFrozen(part) and freeze.IsFrozen(nextPart),
+		"An older resumed condition cannot restore a freeze after another model was released")
+	stopWaiting(); freeze.UnfreezeAll(actor.UserId)
 	config.MAX_FROZEN_MODELS = 0
 	check(not freeze.Freeze(part, actor.UserId), "Zero maximum disables freezing through the rules")
 	config.MAX_FROZEN_MODELS = max

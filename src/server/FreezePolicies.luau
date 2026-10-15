@@ -8,7 +8,6 @@ local config = require(shared.FreezeConfig)
 local ObjectTargets = require(shared.ObjectTargets)
 local InteractionCharacter = require(shared.InteractionCharacter)
 local FreezeServer = require(script.Parent.FreezeServer)
-local DragServer = require(script.Parent.DragServer)
 local WeldServer = require(script.Parent.WeldServer)
 local FreezePolicies = {}
 local started = false
@@ -27,8 +26,8 @@ local function inRange(parts: {BasePart}, position: Vector3): boolean
 	return false
 end
 
-local function enforceLimit(userId: number, reserveNew: boolean)
-	local allowed = math.max(math.floor(config.MAX_FROZEN_MODELS) - (if reserveNew then 1 else 0), 0)
+local function enforceLimit(userId: number)
+	local allowed = math.max(math.floor(config.MAX_FROZEN_MODELS), 0)
 	local models = FreezeServer.GetFrozenModels(userId)
 	for index = 1, math.max(#models - allowed, 0) do FreezeServer.Unfreeze(models[index], "Limit") end
 end
@@ -101,7 +100,6 @@ function FreezePolicies.Start()
 		return config.MAX_FROZEN_MODELS > 0 and root ~= nil
 			and inRange(ObjectTargets.getParts(WeldServer.GetAssemblyTargets(target)), root.Position)
 	end)
-	DragServer.Grabbed:Connect(function(_target, userId) enforceLimit(userId, true) end)
 	FreezeServer.Frozen:Connect(function(target, userId, info)
 		local current = FreezeServer.GetFrozenInfo(target)
 		if not current or current.id ~= info.id then return end
@@ -109,7 +107,7 @@ function FreezePolicies.Start()
 		local root = if player then InteractionCharacter.getRoot(player) else nil
 		if not root or not inRange(info.parts, root.Position) then FreezeServer.Unfreeze(target, "Distance"); return end
 		track(target, userId, info)
-		enforceLimit(userId, false)
+		enforceLimit(userId)
 	end)
 	FreezeServer.Unfrozen:Connect(function(target, _userId, _reason, info)
 		local state = contactsByTarget[target]
@@ -128,7 +126,7 @@ function FreezePolicies.Start()
 		local info = FreezeServer.GetFrozenInfo(target)
 		if info then track(target, info.playerUserId, info); owners[info.playerUserId] = true end
 	end
-	for userId in owners do enforceLimit(userId, false) end
+	for userId in owners do enforceLimit(userId) end
 end
 
 return table.freeze(FreezePolicies)
