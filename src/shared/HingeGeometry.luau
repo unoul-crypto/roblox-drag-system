@@ -10,6 +10,17 @@ function HingeGeometry.settings(config)
 		angularSpeed = config.MAX_ANGULAR_SPEED*power}
 end
 
+-- Higher response removes the soft controller's residual error near contact;
+-- lower speed prevents the final correction from becoming a sudden lunge.
+-- Neither force, torque nor the selected attachment positions are changed.
+function HingeGeometry.driveSettings(distance: number, settings, config): (number, number)
+	local progress = if config.FINISH_DISTANCE > 0 then 1-math.clamp(distance/config.FINISH_DISTANCE,0,1) else 0
+	local blend = progress*progress*(3-2*progress)
+	local response = config.RESPONSIVENESS+(config.FINISH_RESPONSIVENESS-config.RESPONSIVENESS)*blend
+	local finishSpeed = math.min(settings.speed,math.max(config.FINISH_MAX_SPEED,0)*settings.power)
+	return response, settings.speed+(finishSpeed-settings.speed)*blend
+end
+
 function HingeGeometry.world(endpoint: Endpoint): (Vector3, Vector3)
 	return endpoint.part.CFrame:PointToWorldSpace(endpoint.point), endpoint.part.CFrame.Rotation:PointToWorldSpace(endpoint.axis)
 end

@@ -200,6 +200,13 @@ local function prepare(job)
 	return true
 end
 
+local function tuneAttraction(job)
+	local point0, point1 = Geometry.world(job.a),Geometry.world(job.b)
+	local response, speed = Geometry.driveSettings((point0-point1).Magnitude,job.settings,config)
+	job.position.Responsiveness, job.position.MaxVelocity = response,speed
+	job.orientation.Responsiveness = response
+end
+
 local function attraction(job)
 	local attachments = {}
 	for _, endpoint in {job.a,job.b} do
@@ -226,6 +233,7 @@ local function attraction(job)
 	orientation.MaxTorque, orientation.MaxAngularVelocity = job.settings.torque,job.settings.angularSpeed
 	orientation.Responsiveness, orientation.Parent = config.RESPONSIVENESS,job.a.part
 	job.position, job.orientation = position,orientation
+	tuneAttraction(job)
 end
 
 function HingeServer.Click(player: Player, hit: any, point: any, normal: any): (boolean,string,any?)
@@ -301,6 +309,7 @@ function HingeServer.Step()
 		if not valid then finish(job,reason); continue end
 		if os.clock()-job.start > config.PULL_TIMEOUT then finish(job,"TooWeak"); continue end
 		if not Ownership.Claim(job.group0.parts) or not Ownership.Claim(job.group1.parts) then finish(job,"Failed"); continue end
+		tuneAttraction(job)
 		if not Geometry.ready(job.a,job.b,config) then job.settled = nil; continue end
 		job.settled = job.settled or os.clock()
 		if os.clock()-job.settled < config.SETTLE_TIME then continue end

@@ -46,9 +46,25 @@ return function(mock, modules, startRuntime)
 	check(not geometry.ready(e0,e1,config),"Point velocity includes rotation around the body's center")
 	b.AssemblyAngularVelocity = mock.Vector3.zero; b.CFrame = mock.CFrame.new(6.5,0,0)
 	local baseSettings = geometry.settings(config)
+	local farResponse, farSpeed = geometry.driveSettings(config.FINISH_DISTANCE+1,baseSettings,config)
+	check(near(farResponse,config.RESPONSIVENESS) and near(farSpeed,baseSettings.speed),"Distant attraction keeps its original response and speed")
+	local previousResponse, previousSpeed = farResponse,farSpeed
+	for _, fraction in {1,0.75,0.5,0.25,0} do
+		local response, speed = geometry.driveSettings(config.FINISH_DISTANCE*fraction,baseSettings,config)
+		check(response >= previousResponse and speed <= previousSpeed and speed >= 0 and speed <= baseSettings.speed,
+			"Precision response rises smoothly while its speed stays within the original power limit")
+		previousResponse, previousSpeed = response,speed
+	end
+	check(near(previousResponse,config.FINISH_RESPONSIVENESS) and near(previousSpeed,config.FINISH_MAX_SPEED*baseSettings.power),
+		"At contact the precision settings are reached without increasing the force cap")
+	local legacy = table.clone(config); legacy.FINISH_DISTANCE = 0
+	local legacyResponse, legacySpeed = geometry.driveSettings(0,baseSettings,legacy)
+	check(near(legacyResponse,config.RESPONSIVENESS) and near(legacySpeed,baseSettings.speed),"Zero precision distance restores the old controller")
 	check(near(baseSettings.force,config.MAX_FORCE*config.POWER) and near(baseSettings.distance,config.MAX_PULL_DISTANCE*config.POWER),
 		"Power scales absolute force and range instead of mass-compensating the attraction")
 	config.POWER = 0.1; local weak = geometry.settings(config)
+	local _, weakFinishSpeed = geometry.driveSettings(0,weak,config)
+	check(near(weakFinishSpeed,config.FINISH_MAX_SPEED*0.1),"Weak power also reduces the final approach speed")
 	check(weak.force < baseSettings.force and weak.distance < baseSettings.distance and weak.speed < baseSettings.speed,
 		"Lower power reduces force, range and maximum speed")
 	check(second(a,b) == false,"Weak mode cannot start a long-distance pull")
@@ -85,6 +101,17 @@ return function(mock, modules, startRuntime)
 	check(position.MaxForce == baseSettings.force and position.MaxVelocity == baseSettings.speed
 		and orientation.MaxTorque == baseSettings.torque,"Forces and velocity come from server config")
 	check(position.ReactionForceEnabled and orientation.ReactionTorqueEnabled,"Both movable bodies react physically")
+	local oldB = b.CFrame
+	b.CFrame = mock.CFrame.new(5+config.FINISH_DISTANCE*0.25,0,0); step()
+	check(position.Responsiveness > config.RESPONSIVENESS and orientation.Responsiveness == position.Responsiveness
+		and position.MaxVelocity < baseSettings.speed,"The server enables slower precision control near the selected points")
+	check(position.MaxForce == baseSettings.force and orientation.MaxTorque == baseSettings.torque
+		and not position.RigidityEnabled and not orientation.RigidityEnabled,"Precision never bypasses the configured force and torque caps")
+	check((position.Attachment0.Position-x).Magnitude < 0.0001 and (position.Attachment1.Position+x).Magnitude < 0.0001,
+		"Precision control never offsets either selected point")
+	b.CFrame = oldB; step()
+	check(near(position.Responsiveness,config.RESPONSIVENESS) and near(position.MaxVelocity,baseSettings.speed),
+		"Moving away from contact restores the ordinary pull settings")
 	local originalA,originalB = a.CFrame,b.CFrame
 	step(0.1)
 	check(a.CFrame == originalA and b.CFrame == originalB and a.CanCollide and b.CanCollide,

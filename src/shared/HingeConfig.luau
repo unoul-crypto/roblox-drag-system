@@ -8,6 +8,9 @@ return table.freeze({
 	MAX_SPEED = 4,
 	MAX_ANGULAR_SPEED = 2,
 	RESPONSIVENESS = 10,
+	FINISH_DISTANCE = 0.8, -- Blend into precision control inside this distance; 0 disables it.
+	FINISH_RESPONSIVENESS = 80, -- Overcome small load/friction errors within the same force cap.
+	FINISH_MAX_SPEED = 0.6, -- Precision speed at coincident points, also scaled by POWER.
 	PULL_TIMEOUT = 8,
 	SELECTION_TIMEOUT = 30,
 	MAX_USE_DISTANCE = 24,
