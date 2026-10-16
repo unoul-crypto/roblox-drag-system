@@ -3,6 +3,6 @@
   "properties": {
     "RequiresHandle": false,
     "CanBeDropped": false,
-    "ToolTip": "Выбрать две точки, притянуть и соединить шарниром"
+    "ToolTip": "Выбрать две точки, притянуть и сварить"
   }
 }

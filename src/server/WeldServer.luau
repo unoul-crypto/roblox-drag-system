@@ -16,6 +16,7 @@ local locks = require(script.Parent.InteractionLocks)
 
 type Target = BasePart | Model
 type MarkerPoint = {part: BasePart, point: Vector3}
+type MarkerAppearance = {MARKER_SIZE: number, MARKER_COLOR: Color3}
 type WeldRecord = {
 	a: Target, b: Target,
 	folder: Folder, constraint: WeldConstraint | HingeConstraint, marker: BasePart,
@@ -205,7 +206,7 @@ local function markerPosition(target: Target, selection: MarkerPoint): Vector3?
 end
 
 local function populateRecord(a: Target, b: Target, contact: WeldGeometry.Contact, folder: Folder,
-	endpoints: {HingeGeometry.Endpoint}?, attachments: {Attachment}, selection: MarkerPoint?)
+	endpoints: {HingeGeometry.Endpoint}?, attachments: {Attachment}, selection: MarkerPoint?, markerConfig: MarkerAppearance?)
 	for name, target in {Target0 = a, Target1 = b} do
 		local value = Instance.new("ObjectValue")
 		value.Name, value.Value, value.Parent = name, target, folder
@@ -232,8 +233,8 @@ local function populateRecord(a: Target, b: Target, contact: WeldGeometry.Contac
 	folder:SetAttribute("ConnectionType", kind)
 	local marker = Instance.new("Part")
 	marker.Name, marker.Shape = "WeldPoint", Enum.PartType.Ball
-	marker.Size, marker.Color = Vector3.one * config.MARKER_SIZE, config.MARKER_COLOR
-	if endpoints then marker.Size, marker.Color = Vector3.one * hingeConfig.MARKER_SIZE, hingeConfig.MARKER_COLOR end
+	local appearance = markerConfig or (if endpoints then hingeConfig else config)
+	marker.Size, marker.Color = Vector3.one * appearance.MARKER_SIZE, appearance.MARKER_COLOR
 	marker.Material = Enum.Material.Neon
 	marker.CanCollide, marker.CanQuery, marker.CanTouch = false, true, false
 	marker:SetAttribute(config.MARKER_ATTRIBUTE, true)
@@ -268,7 +269,7 @@ local function populateRecord(a: Target, b: Target, contact: WeldGeometry.Contac
 	end
 end
 
-local function createRecord(a: Target, b: Target, contact: WeldGeometry.Contact, endpoints: {HingeGeometry.Endpoint}?, selection: MarkerPoint?)
+local function createRecord(a: Target, b: Target, contact: WeldGeometry.Contact, endpoints: {HingeGeometry.Endpoint}?, selection: MarkerPoint?, markerConfig: MarkerAppearance?)
 	local folder = Instance.new("Folder")
 	folder.Name, folder.Parent = "Connection", weldFolder
 	local retainedA, retainedB = false, false
@@ -278,7 +279,7 @@ local function createRecord(a: Target, b: Target, contact: WeldGeometry.Contact,
 		retainRig(a, contact.part0)
 		retainedB = true
 		retainRig(b, contact.part1)
-		populateRecord(a, b, contact, folder, endpoints, attachments, selection)
+		populateRecord(a, b, contact, folder, endpoints, attachments, selection, markerConfig)
 	end)
 	if not ok then
 		-- Roll back even if an engine/property error interrupted construction.
@@ -325,7 +326,7 @@ function WeldServer.ConnectPoints(endpoint0: HingeGeometry.Endpoint, endpoint1: 
 		if not check() then return false, "NotReady" end
 		local point0, point1 = HingeGeometry.world(endpoint0), HingeGeometry.world(endpoint1)
 		createRecord(a,b,{part0=endpoint0.part,part1=endpoint1.part,point0=point0,point1=point1,distance=(point0-point1).Magnitude},
-			if kind == "Hinge" then {endpoint0,endpoint1} else nil)
+			if kind == "Hinge" then {endpoint0,endpoint1} else nil, nil, hingeConfig)
 		return true, if kind == "Hinge" then "Hinged" else "Mounted"
 	end)
 	release()

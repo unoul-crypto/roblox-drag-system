@@ -15,7 +15,7 @@ return table.freeze({
 	MAX_GROUP_EXTENT = 64,
 	MAX_ACTIVE_PULLS = 12,
 	CAPTURE_DISTANCE = 0.04,
-	CAPTURE_ANGLE = 3, -- Degrees between hinge axes before a permanent link is allowed.
+	CAPTURE_ANGLE = 3, -- Degrees between selected axes before welding is allowed.
 	CAPTURE_MAX_SPEED = 0.5, -- Relative speed of the two points, studs/s.
 	SETTLE_TIME = 0.15,
 	SURFACE_TOLERANCE = 0.15,

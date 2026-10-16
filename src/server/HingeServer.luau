@@ -307,11 +307,10 @@ function HingeServer.Step()
 		job.phase = "Finishing"
 		job.position:Destroy(); job.orientation:Destroy()
 		job.release()
-		local kind = if ObjectMechanisms.isPreserved(job.a.target) or ObjectMechanisms.isPreserved(job.b.target) then "Weld" else "Hinge"
 		local ok, allowed, result = pcall(function()
 			if not validators:Check(job.a.target,job.b.target,job.player.UserId) then return false,"Denied" end
 			if not context(job) then return false,"Cancelled" end
-			return WeldServer.ConnectPoints(job.a,job.b,kind,job.player.UserId,function() return context(job) end)
+			return WeldServer.ConnectPoints(job.a,job.b,"Weld",job.player.UserId,function() return context(job) end)
 		end)
 		if not job.cleaned then finish(job, if ok and allowed then result else (if ok then result else "Failed")) end
 	end

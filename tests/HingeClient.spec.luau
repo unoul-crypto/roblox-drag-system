@@ -71,19 +71,19 @@ return function(mock, modules, startClient)
 	mock.clock += 0.05; modules.HingeServer.Step()
 	mock.clock += modules.HingeConfig.SETTLE_TIME+0.01; modules.HingeServer.Step()
 	local event = status.lastClientEvent
-	check(event[1] == player and event[3] == "Hinged","The server reports successful capture to the owning player")
+	check(event[1] == player and event[3] == "Mounted","The server reports successful welding to the owning player")
 	status.OnClientEvent:Fire(event[2],event[3])
-	check(#markers() == 0 and gui.HingeToolHint:FindFirstChildWhichIsA("TextLabel").Text == "Шарнир создан",
+	check(#markers() == 0 and gui.HingeToolHint:FindFirstChildWhichIsA("TextLabel").Text == "Объекты сварены",
 		"Success clears selection markers and displays the permanent connection result")
 	modules.WeldServer.Unweld(a,b); b.CFrame = mock.CFrame.new(6.5,0,0)
 	finishBeforeReply = true
 	activate(a,1); activate(b,-1)
-	check(#markers() == 0 and gui.HingeToolHint:FindFirstChildWhichIsA("TextLabel").Text == "Шарнир создан",
+	check(#markers() == 0 and gui.HingeToolHint:FindFirstChildWhichIsA("TextLabel").Text == "Объекты сварены",
 		"A delayed start reply cannot resurrect markers after the terminal event")
 	tool:Destroy()
 	check(not gui:FindFirstChild("HingeToolHint") and mock.services.UserInputService.InputBegan:ListenerCount() == 0,
 		"Destroying the tool disconnects keyboard and status listeners")
-	check(modules.WeldServer.HasHinge(a,b),"Tool cleanup does not delete an already completed hinge")
+	check(modules.WeldServer.HasWeld(a,b) and not modules.WeldServer.HasHinge(a,b),"Tool cleanup does not delete an already completed weld")
 	modules.WeldServer.Unweld(a,b)
 	mock.raycastQuery = nil
 	print("Hinge client: " .. checks .. " checks passed (mocked two-click input and status delivery)")
