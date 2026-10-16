@@ -54,7 +54,7 @@ return function(tool: Tool, ownerScript: LocalScript, options)
 		local result = pick()
 		local target = options.hoverTarget(if result then result.Instance else nil)
 		highlight.Adornee, highlight.Enabled = target, target ~= nil
-		if os.clock() >= statusUntil and not pending then label.Text = hint end
+		if os.clock() >= statusUntil and not pending then label.Text = if options.getHint then options.getHint() else hint end
 	end))
 	table.insert(connections, tool.Activated:Connect(function()
 		if not equipped or pending then return end
@@ -62,11 +62,15 @@ return function(tool: Tool, ownerScript: LocalScript, options)
 		if not result then return end
 		pending = true
 		label.Text = "Проверка…"
-		local ok, _, reason = pcall(function() return remote:InvokeServer(result.Instance, result.Position) end)
+		local ok, allowed, reason, payload = pcall(function()
+			if options.sendNormal then return remote:InvokeServer(result.Instance,result.Position,result.Normal) end
+			return remote:InvokeServer(result.Instance,result.Position)
+		end)
 		pending = false
 		if destroyed then return end
 		label.Text = options.messages[if ok then reason else "Failed"] or "Действие не выполнено"
 		statusUntil = os.clock() + 2
+		if options.onResult then options.onResult(ok,allowed,reason,payload) end
 	end))
 	ownerScript.Destroying:Connect(function()
 		destroyed = true
@@ -74,4 +78,9 @@ return function(tool: Tool, ownerScript: LocalScript, options)
 		highlight:Destroy()
 		gui:Destroy()
 	end)
+	return {ShowStatus = function(reason: string)
+		if destroyed then return end
+		label.Text = options.messages[reason] or "Действие не выполнено"
+		statusUntil = os.clock()+3
+	end}
 end

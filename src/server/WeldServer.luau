@@ -8,6 +8,8 @@ local ObjectMechanisms = require(shared.ObjectMechanisms)
 local InteractionCharacter = require(shared.InteractionCharacter)
 local InteractionVisibility = require(shared.InteractionVisibility)
 local WeldGeometry = require(shared.WeldGeometry)
+local HingeGeometry = require(shared.HingeGeometry)
+local hingeConfig = require(shared.HingeConfig)
 local ConnectionGraph = require(shared.ConnectionGraph)
 local ValidationRegistry = require(shared.ValidationRegistry)
 local locks = require(script.Parent.InteractionLocks)
@@ -15,7 +17,8 @@ local locks = require(script.Parent.InteractionLocks)
 type Target = BasePart | Model
 type WeldRecord = {
 	a: Target, b: Target,
-	folder: Folder, constraint: WeldConstraint, marker: BasePart,
+	folder: Folder, constraint: WeldConstraint | HingeConstraint, marker: BasePart,
+	kind: string, attachments: {Attachment},
 	connections: {RBXScriptConnection},
 }
 type ObjectRig = {folder: Folder, count: number}
@@ -57,6 +60,7 @@ local function removeRecord(record: WeldRecord)
 	markers[record.marker] = nil
 	graph:RemoveEdge(record.a, record.b)
 	for _, connection in record.connections do connection:Disconnect() end
+	for _, attachment in record.attachments do attachment:Destroy() end
 	releaseRig(record.a)
 	releaseRig(record.b)
 	record.folder:Destroy()
@@ -64,12 +68,18 @@ end
 
 local function isRecordValid(record: WeldRecord): boolean
 	local weld = record.constraint
+	local part0, part1
+	if record.kind == "Hinge" then
+		local a, b = weld.Attachment0, weld.Attachment1
+		if not a or not b or not a:IsA("Attachment") or not b:IsA("Attachment") then return false end
+		part0, part1 = a.Parent, b.Parent
+	else part0, part1 = weld.Part0, weld.Part1 end
 	return ObjectTargets.isSupported(record.a) and ObjectTargets.isSupported(record.b)
 		and record.folder:IsDescendantOf(weldFolder) and weld:IsDescendantOf(record.folder)
 		and record.marker:IsDescendantOf(record.folder)
-		and weld.Enabled and weld.Part0 ~= nil and weld.Part1 ~= nil
-		and (weld.Part0 == record.a or weld.Part0:IsDescendantOf(record.a))
-		and (weld.Part1 == record.b or weld.Part1:IsDescendantOf(record.b))
+		and weld.Enabled and part0 ~= nil and part1 ~= nil and part0:IsA("BasePart") and part1:IsA("BasePart")
+		and (part0 == record.a or part0:IsDescendantOf(record.a))
+		and (part1 == record.b or part1:IsDescendantOf(record.b))
 end
 
 local function prune()
@@ -133,12 +143,25 @@ function WeldServer.RegisterUnweldValidator(callback: (Target, Target, number?) 
 	return unweldValidators:Register(callback)
 end
 
+function WeldServer.CheckConnectionConditions(a: Target, b: Target, playerUserId: number): boolean
+	return validators:Check(a,b,playerUserId)
+end
+
 local function findRecord(a: Target, b: Target): WeldRecord?
 	prune()
 	for record in records do
 		if (record.a == a and record.b == b) or (record.a == b and record.b == a) then return record end
 	end
 	return nil
+end
+
+function WeldServer.GetConnectionType(a: Target, b: Target): string?
+	local record = findRecord(a, b)
+	return if record then record.kind else nil
+end
+
+function WeldServer.HasHinge(a: Target, b: Target): boolean
+	return WeldServer.GetConnectionType(a, b) == "Hinge"
 end
 
 function WeldServer.GetWeldTargets(marker: any): (Target?, Target?)
@@ -171,17 +194,36 @@ local function inReach(player: Player, contact: WeldGeometry.Contact): boolean
 		and (root.Position - contact.point1).Magnitude <= config.MAX_USE_DISTANCE
 end
 
-local function populateRecord(a: Target, b: Target, contact: WeldGeometry.Contact, folder: Folder)
+local function populateRecord(a: Target, b: Target, contact: WeldGeometry.Contact, folder: Folder,
+	endpoints: {HingeGeometry.Endpoint}?, attachments: {Attachment})
 	for name, target in {Target0 = a, Target1 = b} do
 		local value = Instance.new("ObjectValue")
 		value.Name, value.Value, value.Parent = name, target, folder
 	end
-	local weld = Instance.new("WeldConstraint")
-	weld.Name = "ObjectWeld"
-	weld.Part0, weld.Part1, weld.Parent = contact.part0, contact.part1, folder
+	local kind = if endpoints then "Hinge" else "Weld"
+	local weld
+	if endpoints then
+		for index, endpoint in endpoints do
+			local attachment = Instance.new("Attachment")
+			table.insert(attachments, attachment)
+			attachment.Name = "ObjectHingeAttachment" .. index
+			attachment.Position, attachment.Axis = endpoint.point, endpoint.axis
+			attachment.SecondaryAxis = HingeGeometry.secondary(endpoint.axis)
+			attachment.Parent = endpoint.part
+		end
+		weld = Instance.new("HingeConstraint")
+		weld.Name, weld.Attachment0, weld.Attachment1 = "ObjectHinge", attachments[1], attachments[2]
+		weld.ActuatorType, weld.LimitsEnabled = Enum.ActuatorType.None, false
+	else
+		weld = Instance.new("WeldConstraint")
+		weld.Name, weld.Part0, weld.Part1 = "ObjectWeld", contact.part0, contact.part1
+	end
+	weld.Parent = folder
+	folder:SetAttribute("ConnectionType", kind)
 	local marker = Instance.new("Part")
 	marker.Name, marker.Shape = "WeldPoint", Enum.PartType.Ball
 	marker.Size, marker.Color = Vector3.one * config.MARKER_SIZE, config.MARKER_COLOR
+	if endpoints then marker.Size, marker.Color = Vector3.one * hingeConfig.MARKER_SIZE, hingeConfig.MARKER_COLOR end
 	marker.Material = Enum.Material.Neon
 	marker.CanCollide, marker.CanQuery, marker.CanTouch = false, true, false
 	marker:SetAttribute(config.MARKER_ATTRIBUTE, true)
@@ -191,7 +233,8 @@ local function populateRecord(a: Target, b: Target, contact: WeldGeometry.Contac
 	local markerWeld = Instance.new("WeldConstraint")
 	markerWeld.Name = "MarkerWeld"
 	markerWeld.Part0, markerWeld.Part1, markerWeld.Parent = contact.part0, marker, folder
-	local record: WeldRecord = {a = a, b = b, folder = folder, constraint = weld, marker = marker, connections = {}}
+	local record: WeldRecord = {a = a, b = b, folder = folder, constraint = weld, marker = marker,
+		kind = kind, attachments = attachments, connections = {}}
 	records[record] = true
 	markers[marker] = record
 	graph:AddEdge(a, b)
@@ -206,21 +249,26 @@ local function populateRecord(a: Target, b: Target, contact: WeldGeometry.Contac
 	table.insert(record.connections, weld.Destroying:Connect(function() removeRecord(record) end))
 	table.insert(record.connections, marker.Destroying:Connect(function() removeRecord(record) end))
 	table.insert(record.connections, marker.AncestryChanged:Connect(check))
-	for _, property in {"Enabled", "Part0", "Part1"} do
+	for _, attachment in attachments do
+		table.insert(record.connections, attachment.Destroying:Connect(function() removeRecord(record) end))
+		table.insert(record.connections, attachment.AncestryChanged:Connect(check))
+	end
+	for _, property in if endpoints then {"Enabled", "Attachment0", "Attachment1"} else {"Enabled", "Part0", "Part1"} do
 		table.insert(record.connections, weld:GetPropertyChangedSignal(property):Connect(check))
 	end
 end
 
-local function createRecord(a: Target, b: Target, contact: WeldGeometry.Contact)
+local function createRecord(a: Target, b: Target, contact: WeldGeometry.Contact, endpoints: {HingeGeometry.Endpoint}?)
 	local folder = Instance.new("Folder")
 	folder.Name, folder.Parent = "Connection", weldFolder
 	local retainedA, retainedB = false, false
+	local attachments = {}
 	local ok, problem = pcall(function()
 		retainedA = true
 		retainRig(a, contact.part0)
 		retainedB = true
 		retainRig(b, contact.part1)
-		populateRecord(a, b, contact, folder)
+		populateRecord(a, b, contact, folder, endpoints, attachments)
 	end)
 	if not ok then
 		-- Roll back even if an engine/property error interrupted construction.
@@ -231,8 +279,48 @@ local function createRecord(a: Target, b: Target, contact: WeldGeometry.Contact)
 			if retainedB then releaseRig(b) end
 			folder:Destroy()
 		end
+		for _, attachment in attachments do attachment:Destroy() end
 		error(problem)
 	end
+end
+
+-- Finalize a physical point pull only after both points and axes have settled.
+-- The public entry point owns its reservation and rechecks after yielding validators.
+function WeldServer.ConnectPoints(endpoint0: HingeGeometry.Endpoint, endpoint1: HingeGeometry.Endpoint,
+	kind: string, playerUserId: number, contextCheck: (() -> boolean)?): (boolean, string)
+	if kind ~= "Weld" and kind ~= "Hinge" then return false, "InvalidTarget" end
+	if not HingeGeometry.valid(endpoint0) or not HingeGeometry.valid(endpoint1) then return false, "InvalidTarget" end
+	local a, b = endpoint0.target, endpoint1.target
+	if not validPair(a, b) or graph:HasEdge(a, b) then return false, "InvalidTarget" end
+	local player = Players:GetPlayerByUserId(playerUserId)
+	if not player then return false, "NotAlive" end
+	local character = player.Character
+	local members0, members1 = WeldServer.GetAssemblyTargets(a), WeldServer.GetAssemblyTargets(b)
+	if table.find(members0, b) then return false, "AlreadyWelded" end
+	local release = reserveGroups(a, b)
+	if not release then return false, "Busy" end
+	local function check(): boolean
+		local root = InteractionCharacter.getRoot(player)
+		if player.Parent ~= Players or player.Character ~= character or not root
+			or not validPair(a,b) or graph:HasEdge(a,b) or not HingeGeometry.ready(endpoint0,endpoint1,hingeConfig)
+			or not WeldServer.IsSameAssembly(a,members0) or not WeldServer.IsSameAssembly(b,members1)
+			or (contextCheck and not contextCheck()) then return false end
+		local point0, point1 = HingeGeometry.world(endpoint0), HingeGeometry.world(endpoint1)
+		return (root.Position-point0).Magnitude <= config.MAX_USE_DISTANCE and (root.Position-point1).Magnitude <= config.MAX_USE_DISTANCE
+			and InteractionVisibility.canSee(player,point0,{a,b}) and InteractionVisibility.canSee(player,point1,{a,b})
+	end
+	local ok, allowed, reason = pcall(function(): (boolean,string)
+		if not check() then return false, "NotReady" end
+		if not validators:Check(a,b,playerUserId) then return false, "Denied" end
+		if not check() then return false, "NotReady" end
+		local point0, point1 = HingeGeometry.world(endpoint0), HingeGeometry.world(endpoint1)
+		createRecord(a,b,{part0=endpoint0.part,part1=endpoint1.part,point0=point0,point1=point1,distance=(point0-point1).Magnitude},
+			if kind == "Hinge" then {endpoint0,endpoint1} else nil)
+		return true, if kind == "Hinge" then "Hinged" else "Mounted"
+	end)
+	release()
+	if not ok then warn("WeldSystem: point connection failed:", allowed); return false,"Failed" end
+	return allowed,reason
 end
 
 -- Without an actor, trusted server scripts skip character/reach/visibility checks.

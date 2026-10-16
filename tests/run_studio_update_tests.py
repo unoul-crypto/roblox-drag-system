@@ -26,6 +26,8 @@ def main():
     scripts = [script for d in descriptors for script in sources(d["children"])]
     assert any(s["name"] == "VehicleDemoRuntime" for s in scripts)
     assert any(s["name"] == "JackRuntime" for s in scripts)
+    assert any(s["name"] == "HingeRuntime" for s in scripts)
+    assert any(s["name"] == "HingeTool" and s["className"] == "LocalScript" for s in scripts)
     assert any(s["name"] == "JackTool" and s["className"] == "LocalScript" for s in scripts)
     assert all(s["className"] in exporter.SCRIPT_CLASSES for s in scripts)
     template = (root / "scripts/studio-update.template.luau").read_text(encoding="utf-8-sig")
@@ -91,6 +93,7 @@ check(scenePart.Parent == mock.workspace and scenePart.Position.X == 23 and scen
     "Studio models, positions and weights are preserved")
 check(mock.services.StarterPack.WeldTool.RequiresHandle == false, "Tool metadata is imported")
 check(mock.services.StarterPack.JackTool.RequiresHandle == false, "Jack tool metadata is imported")
+check(mock.services.StarterPack.HingeTool.RequiresHandle == false, "Hinge tool metadata is imported")
 local updates, objects = editor.updates, countObjects()
 check(pcall(update) and editor.updates == updates and countObjects() == objects, "Repeated import is idempotent")
 mock.running = true

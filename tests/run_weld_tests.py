@@ -30,7 +30,7 @@ def main() -> None:
     for name in ["ConnectionGraph", "TargetLocks", "ValidationRegistry", "WeldConfig",
                  "DragConfig", "DragWeight", "DragCollision", "ObjectTargets", "DragAssembly", "WeldGeometry",
                  "DragManipulation", "DragInputController", "PhysicsTargetMotion", "InteractionCharacter",
-                 "InteractionVisibility", "RequestLimiter", "ObjectMechanisms", "VehicleConfig", "VehicleMotion", "FreezeConfig", "JackConfig", "JackMotion", "JackCollision", "ObjectToolClient", "ConnectionToolClient"]:
+                 "InteractionVisibility", "RequestLimiter", "ObjectMechanisms", "VehicleConfig", "VehicleMotion", "FreezeConfig", "JackConfig", "JackMotion", "JackCollision", "ObjectToolClient", "ConnectionToolClient", "HingeConfig", "HingeGeometry"]:
         sections += [f'modules["{name}"] = (function()', source(f"src/shared/{name}.luau"), "end)()",
                      f'mock.services.ReplicatedStorage.Shared["{name}"] = "{name}"',
                      f'script.Parent["{name}"] = "{name}"']
@@ -41,9 +41,11 @@ def main() -> None:
                  'modules.DragConfig.UPDATE_REQUEST_BURST = 10000',
                  'modules.WeldConfig = table.clone(modules.WeldConfig)']
     sections += ['modules.FreezeConfig = table.clone(modules.FreezeConfig)']
+    sections += ['modules.ProductionHingeConfig = modules.HingeConfig',
+                 'modules.HingeConfig = table.clone(modules.HingeConfig)']
     sections += ['modules.InteractionLocks = modules.TargetLocks.new()',
                  'script.Parent.InteractionLocks = "InteractionLocks"']
-    for name in ["DragServer", "WeldServer", "ServerOwnership", "FreezeServer", "FreezePolicies", "VehicleServer", "VehicleDemo", "JackVisual", "JackServer"]:
+    for name in ["DragServer", "WeldServer", "ServerOwnership", "FreezeServer", "FreezePolicies", "VehicleServer", "VehicleDemo", "JackVisual", "JackServer", "HingeServer"]:
         sections += [f'modules["{name}"] = (function()', source(f"src/server/{name}.luau"), "end)()",
                      f'script.Parent["{name}"] = "{name}"']
     sections += ["local function startDragRuntime()", "local script = script.Parent",
@@ -52,6 +54,7 @@ def main() -> None:
                  "local function startVehicleRuntime()", source("src/server/VehicleRuntime.server.luau"), "end",
                  "local function startFreezeRuntime()", source("src/server/FreezeRuntime.server.luau"), "end",
                  "local function startJackRuntime()", source("src/server/JackRuntime.server.luau"), "end",
+                 "local function startHingeRuntime()", source("src/server/HingeRuntime.server.luau"), "end",
                  "local runTests = (function()", source("tests/Welding.spec.luau"), "end)()",
                  "runTests(mock, modules, startDragRuntime, startWeldRuntime)",
                  "local runExtensions = (function()", source("tests/WeldExtensions.spec.luau"), "end)()",
@@ -75,7 +78,13 @@ def main() -> None:
                  "local function startJackTool(tool)", "local script = tool.Client",
                  source("src/tools/JackTool/JackTool.client.luau"), "end",
                  "local runToolClients = (function()", source("tests/ToolClients.spec.luau"), "end)()",
-                 "runToolClients(mock, modules, startJackTool)"]
+                 "runToolClients(mock, modules, startJackTool)",
+                 "local runHinge = (function()", source("tests/Hinge.spec.luau"), "end)()",
+                 "runHinge(mock, modules, startHingeRuntime)",
+                 "local function startHingeTool(tool)", "local script = tool.Client",
+                 source("src/tools/HingeTool/HingeTool.client.luau"), "end",
+                 "local runHingeClient = (function()", source("tests/HingeClient.spec.luau"), "end)()",
+                 "runHingeClient(mock, modules, startHingeTool)"]
     with tempfile.TemporaryDirectory(prefix="weld-tests-") as directory:
         script_path = Path(directory) / "run.luau"
         script_path.write_text("\n".join(sections), encoding="utf-8")

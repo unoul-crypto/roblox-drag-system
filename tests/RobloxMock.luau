@@ -102,7 +102,10 @@ local instances = {}
 local meta = {}
 meta.__index = function(object, key)
 	if methods[key] then return methods[key] end
-	if key == "WorldAxis" and object.ClassName == "Attachment" then return object.Parent.CFrame.XVector end
+	if key == "WorldAxis" and object.ClassName == "Attachment" then
+		return object.Parent.CFrame.Rotation:PointToWorldSpace(object.Axis or vector(1,0,0))
+	end
+	if key == "WorldPosition" and object.ClassName == "Attachment" then return object.Parent.CFrame:PointToWorldSpace(object.Position or vector(0,0,0)) end
 	if key == "Position" and object._properties.Position == nil then return object._properties.CFrame.Position end
 	if object._properties[key] ~= nil then return object._properties[key] end
 	for _, child in object._children do if child.Name == key then return child end end
@@ -153,7 +156,7 @@ Mock.Instance = {new = function(class)
 		_properties = {ClassName = class, Name = class, Enabled = true,
 			Anchored = false, CanCollide = true, AssemblyMass = 1,
 			Size = vector(2, 2, 2), CFrame = Mock.CFrame.new(),
-			Destroying = signal(), AncestryChanged = signal(), OnServerEvent = signal(),
+			Destroying = signal(), AncestryChanged = signal(), OnServerEvent = signal(), OnClientEvent = signal(),
 			DescendantAdded = signal(), DescendantRemoving = signal(), networkAuto = true,
 			CharacterRemoving = signal(), CharacterAdded = signal(), ChildAdded = signal(), Died = signal(),
 			Event = signal(), CollisionGroup = "Default",
@@ -237,6 +240,10 @@ function methods:FireClient(player, ...) self._properties.lastClientEvent = {pla
 function methods:Move(direction) self._properties.moveDirection = direction end
 function methods:GetState() return self.state end
 function methods:GetTouchingParts() return (Mock.touching or {})[self] or {} end
+function methods:GetVelocityAtPosition(point)
+	return (self.AssemblyLinearVelocity or Mock.Vector3.zero)
+		+ (self.AssemblyAngularVelocity or Mock.Vector3.zero):Cross(point-self.Position)
+end
 function methods:GetConnectedParts() return (Mock.nativeConnected or {})[self] or {} end
 function methods:Fire(...) self.Event:Fire(...) end
 
@@ -303,7 +310,7 @@ function actions:BindActionAtPriority(name, callback, _, priority, ...)
 	self.bindings[name] = {callback = callback, priority = priority, inputs = {...}}
 end
 function actions:UnbindAction(name) self.bindings[name] = nil end
-local inputs = {keys = {}, focused = nil}
+local inputs = {keys = {}, focused = nil, InputBegan = signal()}
 function inputs:IsKeyDown(key) return self.keys[key] == true end
 function inputs:GetFocusedTextBox() return self.focused end
 Mock.services.ContextActionService, Mock.services.UserInputService = actions, inputs

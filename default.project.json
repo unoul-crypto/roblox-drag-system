@@ -24,6 +24,9 @@
     },
 
     "StarterPack": {
+      "HingeTool": {
+        "$path": "src/tools/HingeTool"
+      },
       "JackTool": {
         "$path": "src/tools/JackTool"
       },
