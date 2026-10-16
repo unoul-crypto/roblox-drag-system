@@ -1,4 +1,5 @@
 local ObjectTargets = require(script.Parent.ObjectTargets)
+local ObjectMechanisms = require(script.Parent.ObjectMechanisms)
 local HingeGeometry = {}
 export type Endpoint = {target: ObjectTargets.Target, part: BasePart, point: Vector3, axis: Vector3}
 
@@ -20,7 +21,11 @@ function HingeGeometry.valid(endpoint: Endpoint): boolean
 		and typeof(endpoint.point) == "Vector3" and typeof(endpoint.axis) == "Vector3"
 		and ObjectTargets.isFiniteVector(endpoint.point) and ObjectTargets.isFiniteVector(endpoint.axis)
 		and math.abs(endpoint.axis.Magnitude-1) < 0.001
-		and ObjectTargets.containsPoint(endpoint.part, endpoint.part.CFrame:PointToWorldSpace(endpoint.point))
+		-- A preserved mechanism uses a virtual point fixed to its mount, at the
+		-- original clicked location on the model (which can lie on the tire).
+		and (not ObjectMechanisms.isPreserved(endpoint.target) or endpoint.part == endpoint.target.PrimaryPart)
+		and ObjectTargets.containsPoint(if ObjectMechanisms.isPreserved(endpoint.target) then endpoint.target else endpoint.part,
+			endpoint.part.CFrame:PointToWorldSpace(endpoint.point))
 end
 
 function HingeGeometry.ready(a: Endpoint, b: Endpoint, config): boolean

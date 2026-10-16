@@ -15,6 +15,7 @@ local ValidationRegistry = require(shared.ValidationRegistry)
 local locks = require(script.Parent.InteractionLocks)
 
 type Target = BasePart | Model
+type MarkerPoint = {part: BasePart, point: Vector3}
 type WeldRecord = {
 	a: Target, b: Target,
 	folder: Folder, constraint: WeldConstraint | HingeConstraint, marker: BasePart,
@@ -194,8 +195,17 @@ local function inReach(player: Player, contact: WeldGeometry.Contact): boolean
 		and (root.Position - contact.point1).Magnitude <= config.MAX_USE_DISTANCE
 end
 
+local function markerPosition(target: Target, selection: MarkerPoint): Vector3?
+	if type(selection) ~= "table" or not ObjectTargets.isSupported(selection.part) or not selection.part:IsA("BasePart")
+		or (selection.part ~= target and not selection.part:IsDescendantOf(target))
+		or typeof(selection.point) ~= "Vector3" or not ObjectTargets.isFiniteVector(selection.point)
+		or not ObjectTargets.isFiniteCFrame(selection.part.CFrame) then return nil end
+	local point = selection.part.CFrame:PointToWorldSpace(selection.point)
+	return if ObjectTargets.containsPoint(selection.part, point) then point else nil
+end
+
 local function populateRecord(a: Target, b: Target, contact: WeldGeometry.Contact, folder: Folder,
-	endpoints: {HingeGeometry.Endpoint}?, attachments: {Attachment})
+	endpoints: {HingeGeometry.Endpoint}?, attachments: {Attachment}, selection: MarkerPoint?)
 	for name, target in {Target0 = a, Target1 = b} do
 		local value = Instance.new("ObjectValue")
 		value.Name, value.Value, value.Parent = name, target, folder
@@ -228,11 +238,11 @@ local function populateRecord(a: Target, b: Target, contact: WeldGeometry.Contac
 	marker.CanCollide, marker.CanQuery, marker.CanTouch = false, true, false
 	marker:SetAttribute(config.MARKER_ATTRIBUTE, true)
 	marker.Massless, marker.CastShadow = true, false
-	marker.CFrame = CFrame.new((contact.point0 + contact.point1) * 0.5)
+	marker.CFrame = CFrame.new(if selection then markerPosition(a, selection) :: Vector3 else (contact.point0 + contact.point1) * 0.5)
 	marker.Parent = folder
 	local markerWeld = Instance.new("WeldConstraint")
 	markerWeld.Name = "MarkerWeld"
-	markerWeld.Part0, markerWeld.Part1, markerWeld.Parent = contact.part0, marker, folder
+	markerWeld.Part0, markerWeld.Part1, markerWeld.Parent = if selection then selection.part else contact.part0, marker, folder
 	local record: WeldRecord = {a = a, b = b, folder = folder, constraint = weld, marker = marker,
 		kind = kind, attachments = attachments, connections = {}}
 	records[record] = true
@@ -258,7 +268,7 @@ local function populateRecord(a: Target, b: Target, contact: WeldGeometry.Contac
 	end
 end
 
-local function createRecord(a: Target, b: Target, contact: WeldGeometry.Contact, endpoints: {HingeGeometry.Endpoint}?)
+local function createRecord(a: Target, b: Target, contact: WeldGeometry.Contact, endpoints: {HingeGeometry.Endpoint}?, selection: MarkerPoint?)
 	local folder = Instance.new("Folder")
 	folder.Name, folder.Parent = "Connection", weldFolder
 	local retainedA, retainedB = false, false
@@ -268,7 +278,7 @@ local function createRecord(a: Target, b: Target, contact: WeldGeometry.Contact,
 		retainRig(a, contact.part0)
 		retainedB = true
 		retainRig(b, contact.part1)
-		populateRecord(a, b, contact, folder, endpoints, attachments)
+		populateRecord(a, b, contact, folder, endpoints, attachments, selection)
 	end)
 	if not ok then
 		-- Roll back even if an engine/property error interrupted construction.
@@ -324,7 +334,7 @@ function WeldServer.ConnectPoints(endpoint0: HingeGeometry.Endpoint, endpoint1: 
 end
 
 -- Without an actor, trusted server scripts skip character/reach/visibility checks.
-function WeldServer.Weld(a: Target, b: Target, playerUserId: number?, contextCheck: (() -> (boolean, string?))?): (boolean, string)
+function WeldServer.Weld(a: Target, b: Target, playerUserId: number?, contextCheck: (() -> (boolean, string?))?, selection: MarkerPoint?): (boolean, string)
 	prune()
 	if not validPair(a, b) then return false, "InvalidTarget" end
 	if graph:HasEdge(a, b) then return false, "AlreadyWelded" end
@@ -332,8 +342,14 @@ function WeldServer.Weld(a: Target, b: Target, playerUserId: number?, contextChe
 	if playerUserId ~= nil and not player then return false, "OutOfReach" end
 	local character = if player then player.Character else nil
 	local function actorCheck(contact: WeldGeometry.Contact): (boolean, string?)
+		local point = if selection then markerPosition(a, selection) else nil
+		if selection and not point then return false, "InvalidTarget" end
 		if not player then return true, nil end
 		if player.Character ~= character or not InteractionCharacter.getRoot(player) then return false, "NotAlive" end
+		if point then
+			if (InteractionCharacter.getRoot(player).Position - point).Magnitude > config.MAX_USE_DISTANCE then return false, "OutOfReach" end
+			if not InteractionVisibility.canSee(player, point, {a, b}) then return false, "NotVisible" end
+		end
 		if not inReach(player, contact) then return false, "OutOfReach" end
 		if not InteractionVisibility.canSee(player, contact.point0, {a, b})
 			or not InteractionVisibility.canSee(player, contact.point1, {a, b}) then return false, "NotVisible" end
@@ -359,7 +375,7 @@ function WeldServer.Weld(a: Target, b: Target, playerUserId: number?, contextChe
 		if not contact or contact.distance > config.MAX_WELD_DISTANCE then return false, "TooFar" end
 		validActor, actorReason = actorCheck(contact)
 		if not validActor then return false, actorReason :: string end
-		createRecord(a, b, contact)
+		createRecord(a, b, contact, nil, selection)
 		return true, "Welded"
 	end)
 	release()
@@ -413,7 +429,7 @@ function WeldServer.UnweldMarker(marker: any, playerUserId: number, contextCheck
 	return WeldServer.Unweld(a, b, playerUserId, contextCheck)
 end
 
-function WeldServer.WeldNearest(target: Target, playerUserId: number, contextCheck: (() -> (boolean, string?))?): (boolean, string, Target?)
+function WeldServer.WeldNearest(target: Target, playerUserId: number, contextCheck: (() -> (boolean, string?))?, selection: MarkerPoint?): (boolean, string, Target?)
 	local player = Players:GetPlayerByUserId(playerUserId)
 	if not player or not InteractionCharacter.getRoot(player) then return false, "NotAlive" end
 	if not ObjectTargets.isSupported(target) or not CollectionService:HasTag(target, config.TAG_NAME) then
@@ -435,7 +451,7 @@ function WeldServer.WeldNearest(target: Target, playerUserId: number, contextChe
 		end
 	end
 	if not nearest or nearestDistance > config.MAX_WELD_DISTANCE then return false, "NoNearbyTarget" end
-	local allowed, reason = WeldServer.Weld(target, nearest, playerUserId, contextCheck)
+	local allowed, reason = WeldServer.Weld(target, nearest, playerUserId, contextCheck, selection)
 	return allowed, reason, nearest
 end
 

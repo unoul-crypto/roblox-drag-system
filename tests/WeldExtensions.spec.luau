@@ -132,5 +132,42 @@ return function(mock, modules)
 	check(weld.Weld(t0, t1) and weld.Weld(t1, t2) and weld.Weld(t0, t2), "API supports cyclic welded groups")
 	check(weld.Unweld(t0, t2) and not weld.HasWeld(t0, t2) and #weld.GetConnectedTargets(t0) == 2
 		and table.find(weld.GetIndirectConnections(t0), t2), "Removing an edge preserves alternate paths")
+
+	-- Clicked marker location is independent of the closest physical connection.
+	local model = mock.Instance.new("Model"); model.Name,model.Parent = "MarkerModel",mock.workspace
+	collection:AddTag(model,"can-weld")
+	local clicked = mock.part("ClickedFace",0,model)
+	local closest = mock.part("ClosestMount",3,model)
+	local neighbor = target("MarkerNeighbor",5.5,true)
+	for _, part in {clicked,closest,neighbor} do part.CFrame = mock.CFrame.new(part.Position+mock.Vector3.new(0,0,10)) end
+	local offset = mock.Vector3.new(-1,0.6,0.4)
+	local weldTool = mock.Instance.new("Tool"); weldTool.Name,weldTool.Parent = "WeldTool",player.Character
+	local weldRemote = mock.services.ReplicatedStorage.WeldNearest
+	check(weldRemote.OnServerInvoke(player,clicked,clicked.CFrame:PointToWorldSpace(offset)),"Tool passes the clicked point through nearest-target welding")
+	local selectedMarker = markerFor(model,neighbor)
+	check((selectedMarker.Position-clicked.CFrame:PointToWorldSpace(offset)).Magnitude < 0.0001,
+		"Marker stays at the off-center click even when another child is closest to the neighbor")
+	check(selectedMarker.Parent.ObjectWeld.Part0 == closest and selectedMarker.Parent.MarkerWeld.Part0 == clicked,
+		"Physical weld uses closest parts while the marker follows the clicked part")
+	check(weld.UnweldMarker(selectedMarker,player.UserId),"The visible clicked-point marker can be removed normally")
+	-- Move and rotate the model while a custom condition yields.
+	local waiting = weld.RegisterWeldValidator(function() coroutine.yield(); return true end)
+	local response
+	local pendingWeld = coroutine.create(function()
+		response = {weldRemote.OnServerInvoke(player,clicked,clicked.CFrame:PointToWorldSpace(offset))}
+	end)
+	check(coroutine.resume(pendingWeld),"Clicked-point weld can wait for a server condition")
+	local transform = mock.CFrame.new(0,0,5)*mock.CFrame.fromAxisAngle(mock.Vector3.yAxis,math.pi*0.5)
+	for _, part in {clicked,closest,neighbor} do part.CFrame = transform*part.CFrame end
+	check(coroutine.resume(pendingWeld) and response[1],"Moved clicked point is checked in its current world position")
+	selectedMarker = markerFor(model,neighbor)
+	check((selectedMarker.Position-clicked.CFrame:PointToWorldSpace(offset)).Magnitude < 0.0001,
+		"Movement and rotation during validation preserve the local clicked point")
+	waiting(); weld.Unweld(model,neighbor)
+	check(not weldRemote.OnServerInvoke(player,clicked,closest.Position),"A point on another child cannot be passed as the clicked part's point")
+	local invalidSelection = {part=neighbor,point=mock.Vector3.zero}
+	check(not weld.Weld(model,neighbor,player.UserId,nil,invalidSelection),"Marker selection must belong to the first target")
+	check(weld.Weld(model,neighbor),"Existing server API still welds without a selected marker point")
+	weld.Unweld(model,neighbor); model:Destroy(); neighbor:Destroy(); weldTool:Destroy()
 	print("Weld extensions: " .. checks .. " checks passed")
 end

@@ -27,13 +27,14 @@ local function registerRemote(name: string, toolName: string, unweld: boolean)
 		local character = player.Character
 		if not InteractionCharacter.getRoot(player) then return false, "NotAlive" end
 		if not equipped(player, toolName, character) then return false, "EquipTool" end
-		if not ObjectTargets.isSupported(hit) or typeof(point) ~= "Vector3"
+		if not ObjectTargets.isSupported(hit) or not hit:IsA("BasePart") or typeof(point) ~= "Vector3"
 			or not ObjectTargets.isFiniteVector(point) then return false, "InvalidTarget" end
+		local selection = {part = hit, point = hit.CFrame:PointToObjectSpace(point)}
 		local target = if unweld then hit else ObjectTargets.findTagged(hit, config.TAG_NAME)
 		if unweld and not WeldServer.GetWeldTargets(hit) then return false, "InvalidMarker" end
 		local root = InteractionCharacter.getRoot(player)
 		if not target or not root
-			or not ObjectTargets.containsPoint(target, point)
+			or not ObjectTargets.containsPoint(hit, point)
 			or (root.Position - point).Magnitude > config.MAX_USE_DISTANCE then return false, "OutOfReach" end
 		local visibleTargets = if unweld then {WeldServer.GetWeldTargets(hit)} else {target}
 		if not InteractionVisibility.canSee(player, point, visibleTargets) then return false, "NotVisible" end
@@ -42,13 +43,16 @@ local function registerRemote(name: string, toolName: string, unweld: boolean)
 			local liveRoot = InteractionCharacter.getRoot(player)
 			if player.Character ~= character or not liveRoot then return false, "NotAlive" end
 			if not equipped(player, toolName, character) then return false, "EquipTool" end
-			if not ObjectTargets.isSupported(target) or not ObjectTargets.containsPoint(target, point) then return false, "InvalidTarget" end
-			if (liveRoot.Position - point).Magnitude > config.MAX_USE_DISTANCE then return false, "OutOfReach" end
-			if not InteractionVisibility.canSee(player, point, visibleTargets) then return false, "NotVisible" end
+			if not ObjectTargets.isSupported(target) or not ObjectTargets.isSupported(hit)
+				or (hit ~= target and not hit:IsDescendantOf(target)) then return false, "InvalidTarget" end
+			local livePoint = hit.CFrame:PointToWorldSpace(selection.point)
+			if not ObjectTargets.containsPoint(hit, livePoint) then return false, "InvalidTarget" end
+			if (liveRoot.Position - livePoint).Magnitude > config.MAX_USE_DISTANCE then return false, "OutOfReach" end
+			if not InteractionVisibility.canSee(player, livePoint, visibleTargets) then return false, "NotVisible" end
 			return true, nil
 		end
 		local operation = if unweld then WeldServer.UnweldMarker else WeldServer.WeldNearest
-		local ok, allowed, reason = pcall(operation, target, player.UserId, guard)
+		local ok, allowed, reason = pcall(operation, target, player.UserId, guard, if unweld then nil else selection)
 		pending[player] = nil
 		if not ok then warn("WeldSystem: request failed:", allowed); return false, "Failed" end
 		return allowed, reason

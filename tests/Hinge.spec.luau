@@ -201,15 +201,40 @@ return function(mock, modules, startRuntime)
 	end
 	check(jack.Place(actor,platform,platform.Position),"Install a jack under the actual platform")
 	jack.Step(0.05)
-	check(use(tire,tire.Position+x*tire.Size.X*0.5,x),"Select the tire of a prepared wheel")
+	local outerClick = tire.Position+x*tire.Size.X*0.5+mock.Vector3.new(0,0,1.7)
+	accepted,reason,payload = use(tire,outerClick,x)
+	local selectedPoint = payload.point
+	check(accepted and (payload.part.CFrame:PointToWorldSpace(selectedPoint)-outerClick).Magnitude < 0.0001,
+		"Selecting a prepared tire keeps the exact off-center click, including outside the mounting part")
+	check(not modules.ObjectTargets.containsPoint(mount,outerClick),"Regression point lies outside the mounting part bounds")
+	local moved = mock.Vector3.new(0,0.2,0)
+	for _, part in {mount,tire} do part.CFrame = mock.CFrame.new(moved)*part.CFrame end
+	local oppositePoint = mock.Vector3.new(3,platform.Position.Y,-1)
+	accepted,reason,payload = use(platform,oppositePoint,x)
+	check(accepted and reason == "Pulling" and (payload.point-selectedPoint).Magnitude < 0.0001,
+		"Second click never reprojects the first point toward the other model")
+	check((mount.HingePullPoint.WorldPosition-outerClick-moved).Magnitude < 0.0001
+		and (platform.HingePullPoint.WorldPosition-oppositePoint).Magnitude < 0.0001,
+		"Both physical attraction points retain their local positions even if a model moved between clicks")
+	cancel.OnServerEvent:Fire(actor)
+	check(use(platform,oppositePoint,x),"Select the platform before a prepared wheel")
+	local secondClick = tire.Position+x*tire.Size.X*0.5+mock.Vector3.new(0,0,1.7)
+	accepted,reason,payload = use(tire,secondClick,x)
+	check(accepted and (payload.part1.CFrame:PointToWorldSpace(payload.point1)-secondClick).Magnitude < 0.0001,
+		"A prepared mechanism selected second also keeps its exact clicked point")
+	cancel.OnServerEvent:Fire(actor)
+	local innerClick = tire.Position-x*tire.Size.X*0.5+mock.Vector3.new(0,0.25,0.3)
+	check(use(tire,innerClick,-x),"Select the inner tire face for mounting without flipping the axle")
 	local targetPoint = mock.Vector3.new(3,platform.Position.Y,-3)
 	accepted,reason,payload = use(platform,targetPoint,x)
 	check(accepted and reason == "Pulling" and payload.part == mount,"A prepared tire click selects its real mounting part")
 	check(platform.Anchored and not mount.Anchored,"The jack remains fixed while the wheel moves")
 	check(mount.HingePullPoint.Axis.X == -1 and platform.HingePullPoint.Axis.X == -1,
-		"The prepared mounting face points toward the platform instead of pulling the tire inside it")
+		"Mounting orientation keeps the clicked face's axle direction")
 	local point0 = payload.part.CFrame:PointToWorldSpace(payload.point)
 	local point1 = payload.part1.CFrame:PointToWorldSpace(payload.point1)
+	check((point0-innerClick).Magnitude < 0.0001 and (point1-targetPoint).Magnitude < 0.0001,
+		"Successful mounting uses both exact clicks rather than the closest mounting face")
 	local delta = point1-point0
 	for _, part in {mount,tire} do part.CFrame = mock.CFrame.new(delta)*part.CFrame end
 	settle()
@@ -217,6 +242,8 @@ return function(mock, modules, startRuntime)
 		"Prepared wheels get a rigid mount rather than a redundant external axle")
 	check(wheel.WheelMotor == motor and motor.Attachment0.Parent == mount and motor.Attachment1.Parent == tire,
 		"Prepared wheel's existing motor and attachments are preserved")
+	check((connection(wheel,platform).WeldPoint.Position-targetPoint).Magnitude < 0.0001,
+		"The permanent marker is created where the selected points converged")
 	jack.Step(0.05)
 	check(platform.Anchored and mount.Anchored and jack.IsSupported(wheel),"The jack adopts the newly mounted wheel")
 	jack.RemovePlayer(actor); weld.Unweld(wheel,platform)

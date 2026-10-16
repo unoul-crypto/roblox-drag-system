@@ -52,26 +52,20 @@ local function pick(hit, point, normal)
 	local target = ObjectTargets.findTagged(hit,config.TAG_NAME)
 	if not target then return nil end
 	local part = hit
+	if hit:IsA("Part") and hit.Shape == Enum.PartType.Cylinder then
+		local axle = hit.CFrame.XVector
+		normal = if axle:Dot(normal) < 0 then -axle else axle
+	end
 	if ObjectMechanisms.isPreserved(target) then
 		part = target.PrimaryPart
 		if not part or not part:IsDescendantOf(target) then return nil end
-		point = part:GetClosestPointOnSurface(point)
-		normal = part.CFrame.XVector
-	elseif part:IsA("Part") and part.Shape == Enum.PartType.Cylinder then
 		local axle = part.CFrame.XVector
 		normal = if axle:Dot(normal) < 0 then -axle else axle
 	end
+	-- Keep the clicked world point, including points outside a mechanism's mount.
+	-- Store it in the mounting frame once; a second click must never retarget it.
 	return {target=target, part=part, point=part.CFrame:PointToObjectSpace(point),
 		axis=part.CFrame.Rotation:Inverse():PointToWorldSpace(normal)}
-end
-
-local function retargetMount(endpoint, otherPoint)
-	if ObjectMechanisms.isPreserved(endpoint.target) then
-		-- A prepared wheel already owns its axle. Pull its mounting face, not its tire.
-		endpoint.point = endpoint.part.CFrame:PointToObjectSpace(endpoint.part:GetClosestPointOnSurface(otherPoint))
-		local toward = endpoint.part.CFrame:PointToObjectSpace(otherPoint)
-		endpoint.axis = Vector3.new(if toward.X < 0 then -1 else 1,0,0)
-	end
 end
 
 local function group(target)
@@ -257,7 +251,6 @@ function HingeServer.Click(player: Player, hit: any, point: any, normal: any): (
 	local sharedParts = {}; for _, part in group0.parts do sharedParts[part] = true end
 	for _, part in group1.parts do if sharedParts[part] then return false,"AlreadyConnected",nil end end
 	if group0.fixed and group1.fixed then return false,"BothFixed",nil end
-	retargetMount(a,Geometry.world(b)); retargetMount(b,Geometry.world(a))
 	local point0, point1 = Geometry.world(a),Geometry.world(b)
 	-- Surfaces must face each other, while the two attachment X axes point the same
 	-- way. This keeps the tire outside the platform instead of pulling it inside.
