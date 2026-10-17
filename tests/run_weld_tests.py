@@ -30,7 +30,7 @@ def main() -> None:
     for name in ["ConnectionGraph", "TargetLocks", "ValidationRegistry", "WeldConfig",
                  "DragConfig", "DragWeight", "DragCollision", "ObjectTargets", "DragAssembly", "WeldGeometry",
                  "DragManipulation", "DragInputController", "PhysicsTargetMotion", "InteractionCharacter",
-                 "InteractionVisibility", "RequestLimiter", "ObjectMechanisms", "VehicleConfig", "VehicleMotion", "FreezeConfig", "JackConfig", "JackMotion", "JackCollision", "ObjectToolClient", "ConnectionToolClient", "HingeConfig", "HingeGeometry"]:
+                 "InteractionVisibility", "RequestLimiter", "ObjectMechanisms", "VehicleConfig", "VehicleMotion", "FreezeConfig", "JackConfig", "JackMotion", "JackCollision", "ObjectToolClient", "ConnectionSelection", "UnweldToolClient", "ConnectionToolClient", "HingeConfig", "HingeGeometry"]:
         sections += [f'modules["{name}"] = (function()', source(f"src/shared/{name}.luau"), "end)()",
                      f'mock.services.ReplicatedStorage.Shared["{name}"] = "{name}"',
                      f'script.Parent["{name}"] = "{name}"']
@@ -84,7 +84,9 @@ def main() -> None:
                  "local function startHingeTool(tool)", "local script = tool.Client",
                  source("src/tools/HingeTool/HingeTool.client.luau"), "end",
                  "local runHingeClient = (function()", source("tests/HingeClient.spec.luau"), "end)()",
-                 "runHingeClient(mock, modules, startHingeTool)"]
+                 "runHingeClient(mock, modules, startHingeTool)",
+                 "local runUnweldClient = (function()", source("tests/UnweldClient.spec.luau"), "end)()",
+                 "runUnweldClient(mock, modules)"]
     with tempfile.TemporaryDirectory(prefix="weld-tests-") as directory:
         script_path = Path(directory) / "run.luau"
         script_path.write_text("\n".join(sections), encoding="utf-8")

@@ -3,6 +3,6 @@
   "properties": {
     "RequiresHandle": false,
     "CanBeDropped": false,
-    "ToolTip": "Удалить соединение по шарику сварки"
+    "ToolTip": "Выбрать модель и удалить соединение по значку или шарику сварки"
   }
 }

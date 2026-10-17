@@ -8,4 +8,7 @@ return table.freeze({
 	REQUEST_INTERVAL = 0.25,
 	MARKER_SIZE = 0.35,
 	MARKER_COLOR = Color3.fromRGB(255, 170, 40),
+	UNWELD_ICON_SIZE = 36, -- Screen pixels.
+	UNWELD_ICON_GAP = 6,
+	UNWELD_REFRESH_INTERVAL = 0.15,
 })

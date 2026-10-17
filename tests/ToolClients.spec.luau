@@ -5,6 +5,7 @@ return function(mock, modules, startJackTool)
 	mock.services.Players.LocalPlayer = player
 	local gui = mock.Instance.new("PlayerGui"); gui.Name, gui.Parent = "PlayerGui", player
 	local camera = mock.Instance.new("Camera")
+	camera.ViewportSize = {X=1280,Y=720}
 	camera.ViewportPointToRay = function() return {Origin = mock.Vector3.zero, Direction = mock.Vector3.new(0,0,-1)} end
 	mock.workspace.CurrentCamera = camera
 	mock.services.UserInputService.GetMouseLocation = function() return {X = 100, Y = 100} end

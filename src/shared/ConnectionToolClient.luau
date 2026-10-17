@@ -15,15 +15,14 @@ local messages = {
 }
 
 return function(tool: Tool, ownerScript: LocalScript, unweld: boolean)
+	if unweld then return require(script.Parent.UnweldToolClient)(tool, ownerScript, messages) end
 	ObjectToolClient(tool, ownerScript, {
-		remoteName = if unweld then "UnweldMarker" else "WeldNearest",
-		hint = if unweld then "Нажмите на шарик сварки, чтобы удалить соединение"
-			else "Нажмите на объект: сварка с ближайшим объектом",
+		remoteName = "WeldNearest",
+		hint = "Нажмите на объект: сварка с ближайшим объектом",
 		color = config.MARKER_COLOR,
-		ignoreFolders = if unweld then {} else {"WeldConnections"},
+		ignoreFolders = {"WeldConnections"},
 		messages = messages,
 		hoverTarget = function(hit: Instance?): Instance?
-			if unweld then return if hit and hit:GetAttribute(config.MARKER_ATTRIBUTE) == true then hit else nil end
 			return ObjectTargets.findTagged(hit, config.TAG_NAME)
 		end,
 	})

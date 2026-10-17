@@ -45,6 +45,20 @@ return function(tool: Tool, ownerScript: LocalScript, options)
 	gui.Parent = player:WaitForChild("PlayerGui")
 
 	local connections = {}
+	local function request(hit, point, normal)
+		if not equipped or pending or destroyed then return end
+		pending = true
+		label.Text = "Проверка…"
+		local ok, allowed, reason, payload = pcall(function()
+			if options.sendNormal then return remote:InvokeServer(hit,point,normal) end
+			return remote:InvokeServer(hit,point)
+		end)
+		pending = false
+		if destroyed then return end
+		label.Text = options.messages[if ok then reason else "Failed"] or "Действие не выполнено"
+		statusUntil = os.clock() + 2
+		if options.onResult then options.onResult(ok,allowed,reason,payload) end
+	end
 	table.insert(connections, tool.Equipped:Connect(function() equipped, gui.Enabled = true, true end))
 	table.insert(connections, tool.Unequipped:Connect(function()
 		equipped, gui.Enabled, highlight.Enabled = false, false, false
@@ -52,25 +66,18 @@ return function(tool: Tool, ownerScript: LocalScript, options)
 	table.insert(connections, RunService.RenderStepped:Connect(function()
 		if not equipped then return end
 		local result = pick()
-		local target = options.hoverTarget(if result then result.Instance else nil)
+		local overUI = options.isPointerOverUI and options.isPointerOverUI()
+		local target = if overUI then nil else options.hoverTarget(if result then result.Instance else nil)
 		highlight.Adornee, highlight.Enabled = target, target ~= nil
 		if os.clock() >= statusUntil and not pending then label.Text = if options.getHint then options.getHint() else hint end
 	end))
 	table.insert(connections, tool.Activated:Connect(function()
 		if not equipped or pending then return end
+		if options.isPointerOverUI and options.isPointerOverUI() then return end
 		local result = pick()
+		if options.onActivate and options.onActivate(result) then return end
 		if not result then return end
-		pending = true
-		label.Text = "Проверка…"
-		local ok, allowed, reason, payload = pcall(function()
-			if options.sendNormal then return remote:InvokeServer(result.Instance,result.Position,result.Normal) end
-			return remote:InvokeServer(result.Instance,result.Position)
-		end)
-		pending = false
-		if destroyed then return end
-		label.Text = options.messages[if ok then reason else "Failed"] or "Действие не выполнено"
-		statusUntil = os.clock() + 2
-		if options.onResult then options.onResult(ok,allowed,reason,payload) end
+		request(result.Instance,result.Position,result.Normal)
 	end))
 	ownerScript.Destroying:Connect(function()
 		destroyed = true
@@ -78,7 +85,7 @@ return function(tool: Tool, ownerScript: LocalScript, options)
 		highlight:Destroy()
 		gui:Destroy()
 	end)
-	return {ShowStatus = function(reason: string)
+	return {Request = request, ShowStatus = function(reason: string)
 		if destroyed then return end
 		label.Text = options.messages[reason] or "Действие не выполнено"
 		statusUntil = os.clock()+3
