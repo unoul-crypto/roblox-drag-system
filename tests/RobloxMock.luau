@@ -65,7 +65,8 @@ Mock.CFrame = {new = function(x, y, z)
 end}
 Mock.CFrame.newWithMatrix = frame
 function Mock.CFrame.fromAxisAngle(axis, angle)
-	local x, y, z = axis.X, axis.Y, axis.Z
+	local length = axis.Magnitude
+	local x, y, z = axis.X/length, axis.Y/length, axis.Z/length
 	local c, s, t = math.cos(angle), math.sin(angle), 1 - math.cos(angle)
 	return frame(vector(0, 0, 0), {
 		t*x*x+c, t*x*y-s*z, t*x*z+s*y,
@@ -92,7 +93,7 @@ end
 function Frame:PointToObjectSpace(point) return self:Inverse():PointToWorldSpace(point) end
 function Frame:PointToWorldSpace(point) return self.Position + transform(self.matrix, point) end
 function Frame:ToObjectSpace(other) return self:Inverse() * other end
-function Frame:ToAxisAngle()
+local function toAxisAngle(self)
 	-- Rotation-matrix to quaternion, including the 180-degree case.
 	local m = self.matrix
 	local x,y,z,w
@@ -114,9 +115,18 @@ function Frame:ToAxisAngle()
 	local length = math.sqrt(x*x+y*y+z*z)
 	return if length < 1e-10 then vector(0,1,0) else vector(x/length,y/length,z/length),2*math.atan2(length,w)
 end
+function Frame:ToAxisAngle() return toAxisAngle(self) end
+function Frame:Orthonormalize()
+	local x = self.XVector*(1/self.XVector.Magnitude)
+	local y = self.YVector-x*self.YVector:Dot(x)
+	y = y*(1/y.Magnitude)
+	local z = x:Cross(y)
+	return frame(self.Position,{x.X,y.X,z.X,x.Y,y.Y,z.Y,x.Z,y.Z,z.Z})
+end
 function Frame:Lerp(other, alpha)
-	-- The adapter only approximates native rotation interpolation; tests use identity rotation here.
-	return frame(self.Position + (other.Position - self.Position) * alpha, other.matrix)
+	local axis,angle = toAxisAngle(self:ToObjectSpace(other))
+	local rotation = self*Mock.CFrame.fromAxisAngle(axis,angle*alpha)
+	return frame(self.Position + (other.Position - self.Position) * alpha,rotation.matrix)
 end
 
 local methods = {}

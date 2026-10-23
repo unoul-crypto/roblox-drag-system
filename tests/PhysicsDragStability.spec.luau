@@ -69,6 +69,27 @@ return function(mock, modules)
 	check(stability.rotate(identity,goal180,0,2,0.1) == identity and stability.rotate(identity,goal180,0/0,2,0.1) == identity,
 		"Invalid frame durations cannot rotate the goal")
 	check(stability.rotate(identity,goal180,1/60,2,0) == goal180,"Zero response time restores direct rotation targets")
+	-- Reproduce finite matrix drift that double-precision ideal rotations hide.
+	local drifted = mock.CFrame.newWithMatrix(mock.Vector3.zero,{1.000001,0,0,0,0.999999,0,0,0,1.000001})
+	local corrected = stability.rotate(drifted,goal180,1/60,2,0.1)
+	check(near(corrected.XVector.Magnitude,1) and near(corrected.YVector.Magnitude,1)
+		and near(corrected.ZVector.Magnitude,1),"Incremental constraint rotations remove matrix drift before it accumulates")
+	local floatBuffer = buffer.create(4)
+	local function floatFrame(value)
+		local matrix = table.clone(value.matrix)
+		for i,v in matrix do buffer.writef32(floatBuffer,0,v); matrix[i] = buffer.readf32(floatBuffer,0) end
+		return mock.CFrame.newWithMatrix(mock.Vector3.zero,matrix)
+	end
+	local axis = mock.Vector3.new(0.3,0.4,0.5)
+	for _, angle in {0,1e-9,1e-5,0.7,math.pi-1e-7,math.pi,math.pi+1e-7} do
+		local goal = floatFrame(mock.CFrame.fromAxisAngle(axis,angle))
+		local rotation = floatFrame(mock.CFrame.fromAxisAngle(axis,angle+1e-5))
+		for _ = 1,240 do rotation = floatFrame(stability.rotate(rotation,goal,1/60,8,0.1)) end
+		check(modules.ObjectTargets.isFiniteCFrame(rotation)
+			and (rotation.XVector-goal.XVector).Magnitude < 1e-4
+			and (rotation.YVector-goal.YVector).Magnitude < 1e-4,
+			"Float32 rotations settle without invalid targets at tiny angles and the 180-degree boundary")
+	end
 	local actor = mock.player(502)
 	local remotes, run = mock.services.ReplicatedStorage.DragRemotes,mock.services.RunService
 	local bar = mock.part("ThinLightBar",0)

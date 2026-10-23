@@ -44,15 +44,20 @@ end
 function PhysicsDragStability.rotate(current: CFrame, goal: CFrame, deltaTime: number, maxSpeed: number, responseTime: number): CFrame
 	if responseTime <= 0 then return goal end
 	if deltaTime ~= deltaTime or deltaTime <= 0 then return current end
+	-- Constraint CFrames do not normalize accumulated rotation like BasePart.CFrame.
+	-- Normalize both ends and use native slerp: reconstructing a tiny axis-angle
+	-- rotation can amplify float error or normalize a zero axis into NaN.
+	current,goal = current.Rotation:Orthonormalize(),goal.Rotation:Orthonormalize()
 	local remaining = math.min(deltaTime,0.1)
 	while remaining > 1e-8 do
 		local dt = math.min(remaining,1/120)
-		local axis, angle = current:ToObjectSpace(goal):ToAxisAngle()
-		if angle > math.pi then angle -= 2*math.pi end
-		if angle < 0 then axis,angle = -axis,-angle end
-		if angle < 1e-8 then return goal end
-		local step = math.min(angle*(1-math.exp(-dt/responseTime)),math.max(maxSpeed,0)*dt)
-		current = (current*CFrame.fromAxisAngle(axis,step)).Rotation
+		local relative = current:ToObjectSpace(goal)
+		-- Clamp roundoff before acos, especially when the two goals coincide.
+		local cosine = math.clamp((relative.XVector.X+relative.YVector.Y+relative.ZVector.Z-1)*0.5,-1,1)
+		local angle = math.acos(cosine)
+		if angle < 1e-6 then return goal end
+		local alpha = math.min(1-math.exp(-dt/responseTime),math.max(maxSpeed,0)*dt/angle)
+		current = current:Lerp(goal,alpha).Rotation:Orthonormalize()
 		remaining -= dt
 	end
 	return current
@@ -61,6 +66,20 @@ end
 function PhysicsDragStability.mass(value: number): number
 	-- Don't inflate a tiny physical mass to 0.001: that multiplies acceleration.
 	return math.max(value,1e-9)
+end
+
+function PhysicsDragStability.limits(mass: number, gravity: number, radius: number, settings)
+	local function finitePositive(value)
+		return type(value) == "number" and value == value and value > 0 and value < math.huge
+	end
+	-- AssemblyMass may still describe the previous anchored assembly at startup.
+	-- Never pass infinity, NaN or an overflowed product to a native constraint.
+	if not finitePositive(mass) or not finitePositive(gravity) or not finitePositive(radius)
+		or not finitePositive(settings.forceGravityMultiplier) or not finitePositive(settings.orientationTorqueMultiplier) then return nil end
+	local force = PhysicsDragStability.mass(mass)*gravity*settings.forceGravityMultiplier
+	local torque = PhysicsDragStability.mass(mass)*gravity*radius*settings.orientationTorqueMultiplier
+	if not finitePositive(force) or not finitePositive(torque) or force > 1e30 or torque > 1e30 then return nil end
+	return {force=force,torque=torque}
 end
 
 return table.freeze(PhysicsDragStability)

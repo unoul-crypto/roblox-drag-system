@@ -67,6 +67,8 @@ def main() -> None:
                  "runTargetMotion(mock, modules)",
                  "local runStability = (function()", source("tests/PhysicsDragStability.spec.luau"), "end)()",
                  "runStability(mock, modules)",
+                 "local runPhysicsSafety = (function()", source("tests/PhysicsDragSafety.spec.luau"), "end)()",
+                 "runPhysicsSafety(mock, modules)",
                  "local runSecurity = (function()", source("tests/InteractionSecurity.spec.luau"), "end)()",
                  "runSecurity(mock, modules)",
                  "local runGuards = (function()", source("tests/InteractionGuards.spec.luau"), "end)()",

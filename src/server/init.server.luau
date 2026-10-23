@@ -53,6 +53,13 @@ type PhysicsDragRig = {
 	rotationResponseTime: number,
 	rotationSpeed: number,
 	stabilityBlend: number,
+	settings: dragWeight.PhysicsSettings,
+	gravity: number,
+	radius: number,
+	boxOffsetFromRoot: CFrame,
+	boxSize: Vector3,
+	ready: boolean,
+	startupTime: number,
 	requestedGrabPosition: Vector3,
 	targetMotion: physicsTargetMotion.State,
 	targetSettings: physicsTargetMotion.Settings,
@@ -82,6 +89,7 @@ type PendingRequest = {
 	release: (() -> ())?,
 	modelRig: ModelRig?,
 	physicsRig: PhysicsDragRig?,
+	cleanupPhysics: (() -> ())?,
 }
 
 local remotes = Instance.new("Folder")
@@ -215,7 +223,7 @@ local function findRigRoot(model: Model, parts: {BasePart}, hitPosition: Vector3
 end
 
 
-local function createModelRig(target: DragTarget, parts: {BasePart}, hitPosition: Vector3, collisionMode: string): ModelRig
+local function createModelRig(target: DragTarget, parts: {BasePart}, hitPosition: Vector3, collisionMode: string, request: PendingRequest): ModelRig
 	local model = if target:IsA("Model") then target else nil
 	local root = if model then findRigRoot(model, parts, hitPosition) else target :: BasePart
 	local partStates = {}
@@ -229,13 +237,18 @@ local function createModelRig(target: DragTarget, parts: {BasePart}, hitPosition
 			anchored = part.Anchored,
 			canCollide = part.CanCollide,
 		})
-		part.Anchored = false
-		if collisionMode == config.COLLISION_MODE_NO_CLIP then part.CanCollide = false end
 	end
 
 	local container = Instance.new("Folder")
 	container.Name = "DragSystemTemporaryRig"
+	local rig = {model=model,root=root,container=container,partStates=partStates,originalPrimaryPart=originalPrimaryPart}
+	-- Register the full rollback before changing any authored part property.
+	request.modelRig = rig
 	container.Parent = target
+	for _, part in parts do
+		part.Anchored = false
+		if collisionMode == config.COLLISION_MODE_NO_CLIP then part.CanCollide = false end
+	end
 
 	for _, part in parts do
 		if part ~= root then
@@ -248,13 +261,7 @@ local function createModelRig(target: DragTarget, parts: {BasePart}, hitPosition
 	end
 	if model then model.PrimaryPart = root end
 
-	return {
-		model = model,
-		root = root,
-		container = container,
-		partStates = partStates,
-		originalPrimaryPart = originalPrimaryPart,
-	}
+	return rig
 end
 
 local function destroyModelRig(rig: ModelRig?)
@@ -281,19 +288,45 @@ local function destroyModelRig(rig: ModelRig?)
 	end
 end
 
+local function refreshPhysicsData(rig: PhysicsDragRig): (boolean, string)
+	local frame, center = rig.root.CFrame,rig.root.AssemblyCenterOfMass
+	if not isFiniteCFrame(frame) or typeof(center) ~= "Vector3" or not isFiniteVector(center) then return false,"InvalidCenter" end
+	local limits = physicsDragStability.limits(rig.root.AssemblyMass,rig.gravity,rig.radius,rig.settings)
+	if not limits then return false,"InvalidMassOrForce" end
+	local localCenter = (frame*rig.boxOffsetFromRoot):PointToObjectSpace(center)
+	local half = rig.boxSize*0.5+Vector3.one
+	if math.abs(localCenter.X) > half.X or math.abs(localCenter.Y) > half.Y or math.abs(localCenter.Z) > half.Z then return false,"CenterOutsideAssembly" end
+	local forcePoint = physicsDragStability.forcePoint(frame,center,rig.attachment.Position,rig.stabilityBlend)
+	if not isFiniteVector(forcePoint) then return false,"InvalidForcePoint" end
+	rig.positionAttachment.Position = forcePoint
+	rig.alignPosition.MaxForce, rig.alignOrientation.MaxTorque = limits.force,limits.torque
+	return true,"Ready"
+end
+
 local function createPhysicsDragRig(
 	target: DragTarget,
 	root: BasePart,
 	pivot: CFrame,
 	hitPosition: Vector3,
+	boxOffset: CFrame,
 	boxSize: Vector3,
-	weight: number
+	weight: number,
+	request: PendingRequest
 ): PhysicsDragRig
-	local container = Instance.new("Folder")
+	local created = {}
+	request.cleanupPhysics = function()
+		for index = #created,1,-1 do created[index]:Destroy() end
+	end
+	local function new(className: string)
+		local instance = Instance.new(className)
+		table.insert(created,instance)
+		return instance
+	end
+	local container = new("Folder")
 	container.Name = "DragSystemPhysicsRig"
 	container.Parent = target
 
-	local attachment = Instance.new("Attachment")
+	local attachment = new("Attachment")
 	attachment.Name = "DragSystemGrabAttachment"
 	attachment.Position = root.CFrame:PointToObjectSpace(hitPosition)
 	attachment.Parent = root
@@ -302,16 +335,16 @@ local function createPhysicsDragRig(
 	local stabilityBlend = physicsDragStability.blend(boxSize,config)
 	local positionAttachment = attachment
 	if stabilityBlend > 0 then
-		positionAttachment = Instance.new("Attachment")
+		positionAttachment = new("Attachment")
 		positionAttachment.Name = "DragSystemForceAttachment"
-		positionAttachment.Position = physicsDragStability.forcePoint(root.CFrame,root.AssemblyCenterOfMass,attachment.Position,stabilityBlend)
+		positionAttachment.Position = attachment.Position
 		positionAttachment.Parent = root
 	end
-	local assemblyMass = physicsDragStability.mass(root.AssemblyMass)
 	local gravity = math.max(workspace.Gravity, 1)
 	local objectRadius = math.max(boxSize.Magnitude * 0.5, 0.5)
 
-	local alignPosition = Instance.new("AlignPosition")
+	local alignPosition = new("AlignPosition")
+	alignPosition.Enabled = false
 	alignPosition.Name = "DragSystemAlignPosition"
 	alignPosition.Mode = Enum.PositionAlignmentMode.OneAttachment
 	alignPosition.Attachment0 = positionAttachment
@@ -321,24 +354,25 @@ local function createPhysicsDragRig(
 	alignPosition.ApplyAtCenterOfMass = false
 	alignPosition.ReactionForceEnabled = false
 	alignPosition.RigidityEnabled = false
-	alignPosition.MaxForce = assemblyMass * gravity * physicsSettings.forceGravityMultiplier
+	alignPosition.MaxForce = 0
 	alignPosition.MaxVelocity = physicsSettings.maxVelocity
 	alignPosition.Responsiveness = physicsSettings.positionResponsiveness
 	alignPosition.Parent = container
 
-	local alignOrientation = Instance.new("AlignOrientation")
+	local alignOrientation = new("AlignOrientation")
+	alignOrientation.Enabled = false
 	alignOrientation.Name = "DragSystemAlignOrientation"
 	alignOrientation.Mode = Enum.OrientationAlignmentMode.OneAttachment
 	alignOrientation.Attachment0 = attachment
 	alignOrientation.CFrame = root.CFrame.Rotation
 	alignOrientation.ReactionTorqueEnabled = false
 	alignOrientation.RigidityEnabled = false
-	alignOrientation.MaxTorque = assemblyMass * gravity * objectRadius * physicsSettings.orientationTorqueMultiplier
+	alignOrientation.MaxTorque = 0
 	alignOrientation.MaxAngularVelocity = physicsSettings.maxAngularVelocity
 	alignOrientation.Responsiveness = physicsSettings.orientationResponsiveness
 	alignOrientation.Parent = container
 
-	return {
+	local rig = {
 		root = root,
 		rootOffsetFromPivot = pivot:ToObjectSpace(root.CFrame),
 		container = container,
@@ -350,10 +384,23 @@ local function createPhysicsDragRig(
 		rotationResponseTime = stabilityBlend*config.PHYSICS_STABILITY_ROTATION_RESPONSE_TIME,
 		rotationSpeed = physicsSettings.maxAngularVelocity,
 		stabilityBlend = stabilityBlend,
+		settings = physicsSettings,
+		gravity = gravity,
+		radius = objectRadius,
+		boxOffsetFromRoot = root.CFrame:ToObjectSpace(pivot*boxOffset),
+		boxSize = boxSize,
+		ready = false,
+		startupTime = 0,
 		requestedGrabPosition = hitPosition,
 		targetMotion = physicsTargetMotion.new(hitPosition),
 		targetSettings = physicsTargetMotion.getSettings(physicsSettings.maxVelocity, config),
 	}
+	if refreshPhysicsData(rig) then
+		rig.alignPosition.Position = root.CFrame:PointToWorldSpace(rig.positionAttachment.Position)
+		rig.ready = true
+		rig.alignPosition.Enabled, rig.alignOrientation.Enabled = true,true
+	end
+	return rig
 end
 
 local function destroyPhysicsDragRig(rig: PhysicsDragRig?)
@@ -439,7 +486,7 @@ local function beginDrag(player: Player, target: any, hitPosition: any, request:
 	freezeServer.UnfreezeMembers(members, "Grabbed")
 
 	local collisionMode = getCollisionMode(typedTarget)
-	local modelRig = createModelRig(typedTarget, parts, hitPosition, collisionMode)
+	local modelRig = createModelRig(typedTarget, parts, hitPosition, collisionMode,request)
 	request.modelRig = modelRig
 	local pivot = typedTarget:GetPivot()
 	local assembly = dragAssembly.capture(typedTarget, modelRig.root, parts)
@@ -454,8 +501,10 @@ local function beginDrag(player: Player, target: any, hitPosition: any, request:
 			physicsRoot,
 			pivot,
 			hitPosition,
+			assembly.boxOffset,
 			boxSize,
-			weight
+			weight,
+			request
 		)
 		request.physicsRig = physicsRig
 	end
@@ -499,7 +548,7 @@ beginDragRemote.OnServerInvoke = function(player: Player, target: any, hitPositi
 	local ok, accepted, acceptedTarget, payload = pcall(beginDrag, player, target, hitPosition, request)
 	pendingByPlayer[player] = nil
 	if not ok or not accepted then
-		destroyPhysicsDragRig(request.physicsRig)
+		if request.cleanupPhysics then request.cleanupPhysics() else destroyPhysicsDragRig(request.physicsRig) end
 		destroyModelRig(request.modelRig)
 		if request.release then request.release() end
 		if not ok then warn("DragSystem: grab failed:", accepted) end
@@ -593,12 +642,16 @@ updateDragRemote.OnServerEvent:Connect(function(player: Player, target: any, des
 
 		local desiredRoot = sanitizedPivot * physicsRig.rootOffsetFromPivot
 		physicsRig.requestedGrabPosition = grabPosition
+		physicsRig.requestedRotation = desiredRoot.Rotation
+		if not physicsRig.ready then return end
+		if not isFiniteCFrame(physicsRig.root.CFrame) then endSession(player); return end
 		if not config.PHYSICS_TARGET_SMOOTHING_ENABLED then
-			physicsRig.alignPosition.Position = physicsDragStability.forceTarget(grabPosition,physicsRig.root.CFrame,
+			local targetPosition = physicsDragStability.forceTarget(grabPosition,physicsRig.root.CFrame,
 				physicsRig.attachment.Position,physicsRig.positionAttachment.Position)
+			if not isFiniteVector(targetPosition) then endSession(player); return end
+			physicsRig.alignPosition.Position = targetPosition
 			physicsTargetMotion.reset(physicsRig.targetMotion, grabPosition)
 		end
-		physicsRig.requestedRotation = desiredRoot.Rotation
 		if physicsRig.rotationResponseTime <= 0 then physicsRig.alignOrientation.CFrame = desiredRoot.Rotation end
 		return
 	end
@@ -691,10 +744,29 @@ RunService.PreSimulation:Connect(function(deltaTime: number)
 			table.insert(sessionsToEnd, player)
 			continue
 		end
-		local center = rig.root.AssemblyCenterOfMass
-		if not isFiniteVector(center) then table.insert(sessionsToEnd,player); continue end
-		rig.positionAttachment.Position = physicsDragStability.forcePoint(rig.root.CFrame,center,rig.attachment.Position,rig.stabilityBlend)
-		rig.alignOrientation.CFrame = physicsDragStability.rotate(rig.alignOrientation.CFrame,rig.requestedRotation,
+		local ready, problem = refreshPhysicsData(rig)
+		if not ready then
+			rig.alignPosition.Enabled, rig.alignOrientation.Enabled = false,false
+			rig.startupTime += math.clamp(deltaTime,0,0.1)
+			stopTargetMotion(session.assembly.parts)
+			if rig.ready or rig.startupTime >= 0.5 then
+				warn("DragSystem: unsafe physics data; drag cancelled ("..problem..")")
+				table.insert(sessionsToEnd,player)
+			end
+			continue
+		end
+		if not rig.ready then
+			physicsTargetMotion.reset(rig.targetMotion,rig.root.CFrame:PointToWorldSpace(rig.attachment.Position))
+			rig.alignOrientation.CFrame = rig.root.CFrame.Rotation
+			rig.ready = true
+		end
+		if not isFiniteCFrame(rig.alignOrientation.CFrame) or not isFiniteCFrame(rig.requestedRotation) then
+			rig.alignPosition.Enabled, rig.alignOrientation.Enabled = false,false
+			warn("DragSystem: invalid physics target; drag cancelled (RotationInput)")
+			table.insert(sessionsToEnd,player)
+			continue
+		end
+		local rotation = physicsDragStability.rotate(rig.alignOrientation.CFrame,rig.requestedRotation,
 			deltaTime,rig.rotationSpeed,rig.rotationResponseTime)
 		local goal = dragManipulation.clampGrabPoint(rig.requestedGrabPosition, root.Position, config.MAX_GRAB_DISTANCE)
 		local position = if config.PHYSICS_TARGET_SMOOTHING_ENABLED then physicsTargetMotion.step(rig.targetMotion, goal, deltaTime, rig.targetSettings) else goal
@@ -707,7 +779,16 @@ RunService.PreSimulation:Connect(function(deltaTime: number)
 			-- Don't store outward velocity while a reach/lead boundary holds the target.
 			physicsTargetMotion.reset(rig.targetMotion, position)
 		end
-		rig.alignPosition.Position = physicsDragStability.forceTarget(position,rig.root.CFrame,rig.attachment.Position,rig.positionAttachment.Position)
+		local targetPosition = physicsDragStability.forceTarget(position,rig.root.CFrame,rig.attachment.Position,rig.positionAttachment.Position)
+		if not isFiniteVector(targetPosition) or not isFiniteCFrame(rotation) then
+			rig.alignPosition.Enabled, rig.alignOrientation.Enabled = false,false
+			local problem = if not isFiniteVector(targetPosition) then "Position" else "Rotation"
+			warn("DragSystem: invalid physics target; drag cancelled ("..problem..")")
+			table.insert(sessionsToEnd,player)
+			continue
+		end
+		rig.alignPosition.Position, rig.alignOrientation.CFrame = targetPosition,rotation
+		rig.alignPosition.Enabled, rig.alignOrientation.Enabled = true,true
 	end
 	for _, player in sessionsToEnd do endSession(player) end
 end)
