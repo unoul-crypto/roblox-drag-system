@@ -31,6 +31,14 @@ return table.freeze({
 	PHYSICS_TARGET_RESPONSE_TIME = 0.12, -- Seconds to converge on the desired target velocity.
 	PHYSICS_TARGET_ACCELERATION_SMOOTH_TIME = 0.04, -- 0 disables smoothing of acceleration.
 	PHYSICS_TARGET_MAX_LEAD = 4, -- Maximum separation from the actual grab point; 0 disables the cap.
+	PHYSICS_STABILITY_ENABLED = true,
+	PHYSICS_STABILITY_ASPECT_RATIO = 6, -- Start blending safer limits for thin assemblies.
+	PHYSICS_STABILITY_FULL_ASPECT_RATIO = 30,
+	PHYSICS_STABILITY_POSITION_RESPONSIVENESS = 20,
+	PHYSICS_STABILITY_ORIENTATION_RESPONSIVENESS = 20,
+	PHYSICS_STABILITY_MAX_VELOCITY = 60,
+	PHYSICS_STABILITY_MAX_ANGULAR_VELOCITY = 8,
+	PHYSICS_STABILITY_FORCE_GRAVITY_MULTIPLIER = 12,
 
 	-- Base values below apply at weight = 1; LIGHT values are the limit near 0.
 	PHYSICS_WEIGHT_RESISTANCE_SCALE = 1,

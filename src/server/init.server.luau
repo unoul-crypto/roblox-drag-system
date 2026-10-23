@@ -10,6 +10,7 @@ local dragWeight = require(ReplicatedStorage.Shared.DragWeight)
 local dragAssembly = require(ReplicatedStorage.Shared.DragAssembly)
 local dragManipulation = require(ReplicatedStorage.Shared.DragManipulation)
 local physicsTargetMotion = require(ReplicatedStorage.Shared.PhysicsTargetMotion)
+local physicsDragStability = require(ReplicatedStorage.Shared.PhysicsDragStability)
 local objectTargets = require(ReplicatedStorage.Shared.ObjectTargets)
 local objectMechanisms = require(ReplicatedStorage.Shared.ObjectMechanisms)
 local dragServer = require(script.DragServer)
@@ -292,8 +293,8 @@ local function createPhysicsDragRig(
 	attachment.Position = root.CFrame:PointToObjectSpace(hitPosition)
 	attachment.Parent = root
 
-	local physicsSettings = dragWeight.getPhysicsSettings(weight, config)
-	local assemblyMass = math.max(root.AssemblyMass, 0.001)
+	local physicsSettings = physicsDragStability.getSettings(dragWeight.getPhysicsSettings(weight, config),boxSize,config)
+	local assemblyMass = physicsDragStability.mass(root.AssemblyMass)
 	local gravity = math.max(workspace.Gravity, 1)
 	local objectRadius = math.max(boxSize.Magnitude * 0.5, 0.5)
 
@@ -302,6 +303,7 @@ local function createPhysicsDragRig(
 	alignPosition.Mode = Enum.PositionAlignmentMode.OneAttachment
 	alignPosition.Attachment0 = attachment
 	alignPosition.Position = hitPosition
+	-- Keep both the positional reference and applied force at the clicked point.
 	alignPosition.ApplyAtCenterOfMass = false
 	alignPosition.ReactionForceEnabled = false
 	alignPosition.RigidityEnabled = false

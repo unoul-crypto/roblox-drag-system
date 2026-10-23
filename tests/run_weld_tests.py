@@ -29,7 +29,7 @@ def main() -> None:
                 "mock.services.ReplicatedStorage.Shared = {}"]
     for name in ["ConnectionGraph", "TargetLocks", "ValidationRegistry", "WeldConfig",
                  "DragConfig", "DragWeight", "DragCollision", "ObjectTargets", "DragAssembly", "WeldGeometry",
-                 "DragManipulation", "DragInputController", "PhysicsTargetMotion", "InteractionCharacter",
+                 "DragManipulation", "DragInputController", "PhysicsTargetMotion", "PhysicsDragStability", "InteractionCharacter",
                  "InteractionVisibility", "RequestLimiter", "ObjectMechanisms", "VehicleConfig", "VehicleMotion", "FreezeConfig", "JackConfig", "JackMotion", "JackCollision", "ObjectToolClient", "ConnectionSelection", "UnweldToolClient", "ConnectionToolClient", "HingeConfig", "HingeGeometry"]:
         sections += [f'modules["{name}"] = (function()', source(f"src/shared/{name}.luau"), "end)()",
                      f'mock.services.ReplicatedStorage.Shared["{name}"] = "{name}"',
@@ -65,6 +65,8 @@ def main() -> None:
                  "runReach(mock, modules)",
                  "local runTargetMotion = (function()", source("tests/PhysicsTargetMotion.spec.luau"), "end)()",
                  "runTargetMotion(mock, modules)",
+                 "local runStability = (function()", source("tests/PhysicsDragStability.spec.luau"), "end)()",
+                 "runStability(mock, modules)",
                  "local runSecurity = (function()", source("tests/InteractionSecurity.spec.luau"), "end)()",
                  "runSecurity(mock, modules)",
                  "local runGuards = (function()", source("tests/InteractionGuards.spec.luau"), "end)()",
