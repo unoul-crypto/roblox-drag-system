@@ -92,6 +92,28 @@ end
 function Frame:PointToObjectSpace(point) return self:Inverse():PointToWorldSpace(point) end
 function Frame:PointToWorldSpace(point) return self.Position + transform(self.matrix, point) end
 function Frame:ToObjectSpace(other) return self:Inverse() * other end
+function Frame:ToAxisAngle()
+	-- Rotation-matrix to quaternion, including the 180-degree case.
+	local m = self.matrix
+	local x,y,z,w
+	local trace = m[1]+m[5]+m[9]
+	if trace > 0 then
+		local s = math.sqrt(trace+1)*2
+		w,x,y,z = s*0.25,(m[8]-m[6])/s,(m[3]-m[7])/s,(m[4]-m[2])/s
+	elseif m[1] > m[5] and m[1] > m[9] then
+		local s = math.sqrt(1+m[1]-m[5]-m[9])*2
+		w,x,y,z = (m[8]-m[6])/s,s*0.25,(m[2]+m[4])/s,(m[3]+m[7])/s
+	elseif m[5] > m[9] then
+		local s = math.sqrt(1+m[5]-m[1]-m[9])*2
+		w,x,y,z = (m[3]-m[7])/s,(m[2]+m[4])/s,s*0.25,(m[6]+m[8])/s
+	else
+		local s = math.sqrt(1+m[9]-m[1]-m[5])*2
+		w,x,y,z = (m[4]-m[2])/s,(m[3]+m[7])/s,(m[6]+m[8])/s,s*0.25
+	end
+	if w < 0 then x,y,z,w = -x,-y,-z,-w end
+	local length = math.sqrt(x*x+y*y+z*z)
+	return if length < 1e-10 then vector(0,1,0) else vector(x/length,y/length,z/length),2*math.atan2(length,w)
+end
 function Frame:Lerp(other, alpha)
 	-- The adapter only approximates native rotation interpolation; tests use identity rotation here.
 	return frame(self.Position + (other.Position - self.Position) * alpha, other.matrix)
@@ -107,6 +129,7 @@ meta.__index = function(object, key)
 	end
 	if key == "WorldPosition" and object.ClassName == "Attachment" then return object.Parent.CFrame:PointToWorldSpace(object.Position or vector(0,0,0)) end
 	if key == "Position" and object._properties.Position == nil then return object._properties.CFrame.Position end
+	if key == "AssemblyCenterOfMass" and object._properties.AssemblyCenterOfMass == nil then return object.Position end
 	if object._properties[key] ~= nil then return object._properties[key] end
 	for _, child in object._children do if child.Name == key then return child end end
 	return nil

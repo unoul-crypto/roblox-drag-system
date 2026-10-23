@@ -39,6 +39,7 @@ return table.freeze({
 	PHYSICS_STABILITY_MAX_VELOCITY = 60,
 	PHYSICS_STABILITY_MAX_ANGULAR_VELOCITY = 8,
 	PHYSICS_STABILITY_FORCE_GRAVITY_MULTIPLIER = 12,
+	PHYSICS_STABILITY_ROTATION_RESPONSE_TIME = 0.1, -- Smooth angular goals for stabilized shapes; 0 restores direct goals.
 
 	-- Base values below apply at weight = 1; LIGHT values are the limit near 0.
 	PHYSICS_WEIGHT_RESISTANCE_SCALE = 1,
